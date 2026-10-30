@@ -8,6 +8,7 @@ from pathlib import Path
 from mock_responses import make_events
 import task_attribution
 import weekly_budget
+import official_reserve
 from usage_accounting import request_features, reported_usage
 
 MAX_BODY = 1024 * 1024
@@ -88,7 +89,12 @@ def initialize(home, name, model='tokencoin-demo', backend='mock', upstream=None
     private_write(home / 'node.json', cfg)
     return cfg
 
-def invite(home, base_url, out, label='friend', requests=20, minutes=60, allow_private_http=False, weekly_percent=None):
+def invite(home, base_url, out, label='friend', requests=20, minutes=60, allow_private_http=False, weekly_percent=None, budget_mode=None, **options):
+    reserve_option=options.pop('official_reserve',False)
+    if options:raise TypeError('Unknown invite option')
+    if reserve_option:
+        if budget_mode not in (None,'official_weekly_reserve'):raise ValueError('Conflicting budget mode')
+        budget_mode='official_weekly_reserve'
     if not 1 <= requests <= 1000 or not 1 <= minutes <= 1440: raise ValueError('Invalid request or expiry limit')
     cfg = config(home); base_url = valid_url(base_url, allow_private_http)
     if weekly_percent is not None and cfg['backend']!='subscription-adapter':
@@ -104,10 +110,19 @@ def invite(home, base_url, out, label='friend', requests=20, minutes=60, allow_p
     budget=None
     with db(home) as c:
         weekly_budget.initialize(c)
+        official_reserve.initialize(c)
+        if budget_mode=='official_weekly_reserve':
+            if cfg['backend']!='subscription-adapter':raise official_reserve.ReserveError('official_reserve_requires_subscription')
+            if weekly_percent is not None:raise official_reserve.ReserveError('conflicting_budget_modes')
+            reserve_cfg=c.execute('SELECT valid_until,weekly_reset FROM official_reserve_config WHERE singleton=1').fetchone()
+            if not reserve_cfg:raise official_reserve.ReserveError('official_reserve_not_configured')
+            expiry=min(expiry,reserve_cfg['valid_until'],reserve_cfg['weekly_reset']);value['expires']=expiry
+        elif budget_mode not in (None,'legacy_requests','estimated_weekly'):raise ValueError('Unknown budget mode')
         c.execute('BEGIN IMMEDIATE')
         c.execute('INSERT INTO channels(id,label,token_hash,expires,remaining) VALUES(?,?,?,?,?)',
                   (channel_id,label,secret_hash(token),expiry,requests))
         if weekly_percent is not None:budget=weekly_budget.create_grant(c,channel_id,weekly_percent)
+        if budget_mode=='official_weekly_reserve':budget=official_reserve.create_grant(c,channel_id)
         try: private_write(out, value)
         except BaseException: c.rollback(); raise
     return {'channel_id':channel_id, 'invitation_file':str(Path(out).resolve()),
@@ -146,26 +161,33 @@ def local_status(home):
         weekly_budget.initialize(c)
         calibration=weekly_budget.active_profile(c)
         channels=[dict(r) for r in c.execute('SELECT id,label,expires,remaining,revoked FROM channels')]
-        for item in channels:item['budget']=weekly_budget.summary(c,item['id'])
+        official_reserve.initialize(c)
+        reserve_state=official_reserve.summary(c)
+        for item in channels:item['budget']=official_reserve.summary(c,item['id']) or weekly_budget.summary(c,item['id'])
         requests=[dict(r) for r in c.execute('SELECT id,channel_id,status,started,ended,usage FROM requests ORDER BY started DESC LIMIT 30')]
-    return dict(supplier=cfg['name'],model=cfg['model'],backend=cfg['backend'],channels=channels,requests=requests,calibration=calibration)
+    return dict(supplier=cfg['name'],model=cfg['model'],backend=cfg['backend'],channels=channels,requests=requests,calibration=calibration,official_reserve=reserve_state)
 
 def revoke(home, channel_id):
     with db(home) as c:
         result=c.execute('UPDATE channels SET revoked=1 WHERE id=?',(channel_id,))
         if not result.rowcount: raise ValueError('Channel not found')
-    return {'channel_id':channel_id,'revoked':True,'in_flight_policy':'already accepted requests may finish'}
+    return {'channel_id':channel_id,'revoked':True,
+            'in_flight_policy':'official-reserve streams are asked to stop; termination is best effort and other accepted requests may finish'}
 
 class Gateway(http.server.ThreadingHTTPServer):
     daemon_threads=True
-    def __init__(self, address, home, upstream_key=None):
+    def __init__(self, address, home, upstream_key=None, reserve_guard=None):
         self.home=Path(home); self.cfg=config(home)
         self.upstream_key=upstream_key if upstream_key is not None else (os.environ.get(self.cfg['key_env'],'') if self.cfg['key_env'] else '')
+        self.reserve_guard=reserve_guard
         if self.cfg['backend']!='mock' and not self.upstream_key:
             raise ValueError('Set the configured upstream credential environment variable before starting')
         task_attribution.initialize_schema(home)
         with db(home) as c:
             weekly_budget.initialize(c)
+            official_reserve.initialize(c)
+            if c.execute('SELECT 1 FROM official_reserve_grants LIMIT 1').fetchone() and reserve_guard is None:
+                raise ValueError('reserve_guard_required')
             c.execute("UPDATE requests SET status='unknown_after_restart',ended=? WHERE status='running'",(time.time(),))
         super().__init__(address, Handler)
 
@@ -185,22 +207,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return value[7:]
     def do_GET(self):
         try:
-            if self.path=='/health': return self.json_reply(200,{'ready':True})
+            if self.path=='/health':
+                with db(self.server.home) as c:reserve_state=official_reserve.summary(c)
+                safe=None if reserve_state is None else {'mode':reserve_state['mode'],'blocked_reason':reserve_state['blocked_reason']}
+                return self.json_reply(200,{'ready':True,'official_reserve':safe})
             if self.path!='/v1/channel': raise ChannelError(404,'route_not_found')
             with db(self.server.home) as c:
                 row=auth(c,self.token())
-                budget=weekly_budget.summary(c,row['id'])
+                budget=official_reserve.summary(c,row['id']) or weekly_budget.summary(c,row['id'])
             cfg=self.server.cfg
             self.json_reply(200,dict(channel_id=row['id'],supplier=cfg['name'],backend=cfg['backend'],
                                    model=cfg['model'],remaining_requests=row['remaining'],expires=row['expires'],budget=budget))
         except ChannelError as e:self.json_reply(e.status,{'error':{'code':e.code}})
     def do_POST(self):
-        started=False; request_id=None; outcome='unknown'; usage=None; terminal_sent=False
+        started=False; request_id=None; outcome='unknown'; usage=None; terminal_sent=False; active_upstream=None
         try:
             if self.path!='/v1/responses': raise ChannelError(404,'route_not_found')
             if self.headers.get('Origin'): raise ChannelError(403,'browser_origin_not_allowed')
             token=self.token()
-            with db(self.server.home) as c: auth(c,token)
+            with db(self.server.home) as c:
+                authrow=auth(c,token);reserve_granted=official_reserve.is_granted(c,authrow['id'])
+            if reserve_granted:
+                if self.server.reserve_guard is None:raise ChannelError(503,'reserve_guard_required')
+                try:self.server.reserve_guard.authorize(authrow['id'])
+                except official_reserve.ReserveError as e:raise ChannelError(429,e.code) from None
             if self.headers.get('Transfer-Encoding') or self.headers.get('Content-Encoding') not in (None,'identity'):
                 raise ChannelError(400,'encoded_request_not_supported')
             try: size=int(self.headers.get('Content-Length','0'))
@@ -261,6 +291,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     status=e.code if e.code in (400,401,403,404,409,429,500,502,503,504) else 502
                     e.close(); outcome='upstream_rejected'; raise ChannelError(status,'upstream_rejected_request')
                 with upstream:
+                    if reserve_granted:
+                        try:self.server.reserve_guard.register_stream(upstream,owner)
+                        except official_reserve.ReserveError as e:raise ChannelError(429,e.code) from None
+                        active_upstream=upstream
                     if 'text/event-stream' not in upstream.headers.get('Content-Type',''):
                         raise ChannelError(502,'upstream_did_not_return_sse')
                     start_stream(); pending=b''; total=0; deadline=time.monotonic()+300; completed=False
@@ -305,6 +339,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 try:self.wfile.write(b'event: error\ndata: {"type":"error","code":"internal_error","message":"Gateway error"}\n\n');self.wfile.flush()
                 except OSError:pass
         finally:
+            if active_upstream is not None:self.server.reserve_guard.finish_stream(active_upstream)
             if request_id:finish(self.server.home,request_id,outcome,usage)
             if started:self.close_connection=True
 
@@ -383,7 +418,7 @@ def main(argv=None):
     def home(q):q.add_argument('--home',required=True,type=Path)
     q=s.add_parser('init');home(q);q.add_argument('--name',required=True);q.add_argument('--model',default='tokencoin-demo');q.add_argument('--backend',choices=['mock','api','subscription-adapter'],default='mock');q.add_argument('--upstream');q.add_argument('--key-env');q.add_argument('--allow-private-http',action='store_true')
     q=s.add_parser('serve');home(q);q.add_argument('--host',default='127.0.0.1');q.add_argument('--port',type=int,default=8781);q.add_argument('--cert');q.add_argument('--key');q.add_argument('--allow-private-http',action='store_true')
-    q=s.add_parser('invite');home(q);q.add_argument('--url',required=True);q.add_argument('--out',required=True,type=Path);q.add_argument('--label',default='friend');q.add_argument('--requests',type=int,default=20);q.add_argument('--weekly-percent',type=float);q.add_argument('--minutes',type=int,default=60);q.add_argument('--allow-private-http',action='store_true')
+    q=s.add_parser('invite');home(q);q.add_argument('--url',required=True);q.add_argument('--out',required=True,type=Path);q.add_argument('--label',default='friend');q.add_argument('--requests',type=int,default=20);q.add_argument('--weekly-percent',type=float);q.add_argument('--budget-mode',choices=['legacy_requests','estimated_weekly','official_weekly_reserve']);q.add_argument('--minutes',type=int,default=60);q.add_argument('--allow-private-http',action='store_true')
     q=s.add_parser('join');home(q);q.add_argument('--peer',required=True);q.add_argument('--invite',required=True,type=Path);q.add_argument('--allow-private-http',action='store_true')
     q=s.add_parser('status');home(q);q.add_argument('--peer')
     q=s.add_parser('revoke');home(q);q.add_argument('--channel',required=True)
@@ -407,7 +442,7 @@ def main(argv=None):
             try:server.serve_forever()
             except KeyboardInterrupt:pass
             finally:server.server_close()
-        elif a.command=='invite':print(dump(invite(a.home,a.url,a.out,a.label,a.requests,a.minutes,a.allow_private_http,getattr(a,'weekly_percent',None))))
+        elif a.command=='invite':print(dump(invite(a.home,a.url,a.out,a.label,a.requests,a.minutes,a.allow_private_http,getattr(a,'weekly_percent',None),getattr(a,'budget_mode',None))))
         elif a.command=='join':print(dump(join(a.home,a.peer,a.invite,a.allow_private_http)))
         elif a.command=='status':print(dump(peer_status(peer_read(a.home,a.peer)) if a.peer else local_status(a.home)))
         elif a.command=='revoke':print(dump(revoke(a.home,a.channel)))

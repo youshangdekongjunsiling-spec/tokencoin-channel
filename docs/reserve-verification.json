@@ -1,0 +1,64 @@
+{
+  "version": "0.4.1",
+  "status": "local_acceptance_passed",
+  "tests": {
+    "total": 109,
+    "passed": 109,
+    "skipped": 0,
+    "platform": "Windows x64",
+    "command": "python -B -m unittest discover -s codex-channel/tests -v"
+  },
+  "javascript_syntax": "node --check passed",
+  "official_reader_live_verified": true,
+  "policy": {
+    "mode": "official_weekly_reserve",
+    "floor_percent": 30,
+    "stop_at_used_percent": 70,
+    "includes_owner_usage": true,
+    "no_automatic_renewal": true,
+    "maximum_authorization_hours": 24,
+    "hard_boundary": false
+  },
+  "real_cli": {
+    "status": "passed",
+    "backend": "subscription-adapter",
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "low",
+    "cli_status": "completed",
+    "cli_returncode": 0,
+    "marker_present": true,
+    "test_file_unchanged": true,
+    "independent_test_returncode": 0,
+    "independent_tests_passed": true,
+    "owner_channel_revoked": true,
+    "friend_quota_charged": false,
+    "requests": [
+      {
+        "status": "completed_upstream",
+        "usage_source": "upstream_reported"
+      },
+      {
+        "status": "completed_upstream",
+        "usage_source": "upstream_reported"
+      },
+      {
+        "status": "completed_upstream",
+        "usage_source": "upstream_reported"
+      }
+    ]
+  },
+  "calibration": {
+    "training_tasks": 8,
+    "independent_validation_tasks": 4,
+    "real_requests": 28,
+    "full_official_labels_available": 0,
+    "real_coefficients_created": false,
+    "independent_10_percent_enabled": false
+  },
+  "limitations": [
+    "Quota threshold boundary tests use controlled official-schema data; no live depletion to 30%.",
+    "Official data can lag and upstream may continue accepted requests after disconnect.",
+    "macOS hardware and remote friend trial not yet verified.",
+    "No delivery, availability or exact quota boundary guarantee."
+  ]
+}

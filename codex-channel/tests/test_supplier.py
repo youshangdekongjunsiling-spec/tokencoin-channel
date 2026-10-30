@@ -25,8 +25,10 @@ class SupplierTests(unittest.TestCase):
         (self.root/"auth").mkdir();(self.root/"auth"/"synthetic.json").write_text("{}")
         socket=MagicMock();socket.__enter__.return_value.connect_ex.return_value=1
         process=MagicMock();process.poll.return_value=None
+        cfg=adapter.make_config(self.root)
+        def private_write(path,value):Path(path).write_text(json.dumps(value),encoding="utf-8")
         replies=[(200,b'{"data":[]}'),(200,b'{"data":[{"id":"ready-model"}]}')]
-        with patch.object(adapter,"verify",return_value=(Path("unused"),{})),patch.object(supplier.socket,"socket",return_value=socket),patch.object(supplier.subprocess,"Popen",return_value=process),patch.object(adapter,"request",side_effect=replies) as request,patch.object(supplier.time,"sleep"):
+        with patch.object(adapter,"verify",return_value=(Path("unused"),cfg)),patch.object(adapter,"private_write",side_effect=private_write),patch.object(supplier.socket,"socket",return_value=socket),patch.object(supplier.subprocess,"Popen",return_value=process),patch.object(adapter,"request",side_effect=replies) as request,patch.object(supplier.time,"sleep"):
             with supplier.AdapterProcess(self.root) as upstream:self.assertEqual(upstream.models,{"ready-model"})
             self.assertEqual(request.call_count,2);process.terminate.assert_called_once()
     def test_private_config_change_fails_closed(self):

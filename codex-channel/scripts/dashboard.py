@@ -33,6 +33,7 @@ else:
 
 import channel
 import weekly_budget
+import official_reserve
 import run_supplier
 import setup_adapter
 import setup_quick_connect
@@ -282,8 +283,14 @@ class DashboardState:
             raise ApiError(400, "invalid_connection_mode")
         if connection == "quick" and (host != "127.0.0.1" or allow):
             raise ApiError(400, "quick_requires_loopback")
-        return {"mode": mode, "name": name, "model": model, "host": host, "port": port,
-                "allow_private_http": allow, "connection": connection}
+        fields = {"mode": mode, "name": name, "model": model, "host": host, "port": port,
+                  "allow_private_http": allow, "connection": connection}
+        floor = body.get("official_reserve_floor")
+        if floor is not None:
+            if mode != "subscription" or isinstance(floor, bool) or floor != 30:
+                raise ApiError(400, "invalid_official_reserve_floor")
+            fields["official_reserve_floor"] = 30
+        return fields
 
     def start_supplier(self, body: dict) -> dict:
         fields = self._supplier_fields(body)
@@ -321,6 +328,8 @@ class DashboardState:
                         "--port", str(fields["port"]), "--stop-file", str(self.supplier_stop_file)]
                 if fields["allow_private_http"]:
                     args.append("--allow-private-http")
+                if fields.get("official_reserve_floor") == 30:
+                    args.extend(["--official-reserve-floor", "30"])
                 self.supplier_process = subprocess.Popen(args, stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False,
                     creationflags=((subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)
@@ -446,14 +455,18 @@ class DashboardState:
         base_url = _safe_text(body.get("base_url"), 300)
         label = _safe_text(body.get("label", "friend"), 80)
         budget_mode = body.get("budget_mode", "legacy_requests")
-        if budget_mode not in ("legacy_requests", "estimated_weekly"):
+        if budget_mode not in ("legacy_requests", "estimated_weekly", "official_weekly_reserve"):
             raise ApiError(400, "invalid_budget_mode")
-        requests = body.get("requests", 1000 if budget_mode == "estimated_weekly" else 20)
+        requests = body.get("requests", 1000 if budget_mode != "legacy_requests" else 20)
         weekly_percent = body.get("weekly_percent") if budget_mode == "estimated_weekly" else None
         minutes = body.get("minutes", 60)
         allow = body.get("allow_private_http", False)
         if type(requests) is not int or type(minutes) is not int or type(allow) is not bool:
             raise ApiError(400, "invalid_invite_limits")
+        if budget_mode == "official_weekly_reserve":
+            self._real_supplier_config()
+            if (self.settings.get("supplier") or {}).get("official_reserve_floor") != 30:
+                raise ApiError(409, "official_reserve_not_enabled")
         if budget_mode == "estimated_weekly":
             if self.mock_server:
                 raise ApiError(409, "weekly_budget_requires_subscription")
@@ -480,10 +493,10 @@ class DashboardState:
         try:
             metadata = channel.invite(
                 self.supplier_home, base_url, out, label, requests, minutes, allow,
-                weekly_percent,
+                weekly_percent, official_reserve=budget_mode == "official_weekly_reserve",
             )
             invitation = json.loads(out.read_text("utf-8"))
-        except weekly_budget.BudgetError as error:
+        except (weekly_budget.BudgetError, official_reserve.ReserveError) as error:
             out.unlink(missing_ok=True)
             raise self._budget_error(error) from None
         except (OSError, ValueError, KeyError):

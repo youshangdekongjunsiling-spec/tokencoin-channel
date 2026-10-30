@@ -2,9 +2,10 @@
 No secret arguments: the private adapter entry key is loaded inside this process.
 """
 from __future__ import annotations
-import argparse, ipaddress, json, os, signal, socket, subprocess, sys, time, urllib.error
+import argparse, copy, ipaddress, json, os, secrets, signal, socket, subprocess, sys, time, urllib.error, uuid
 from pathlib import Path
 import channel
+import official_reserve
 import setup_adapter as adapter
 
 def validate_listener(host, allow_private_http):
@@ -16,19 +17,21 @@ def validate_listener(host, allow_private_http):
         raise ValueError("Bind a specific trusted private/VPN IPv4 address and explicitly allow private HTTP")
 
 class AdapterProcess:
-    def __init__(self, root): self.root, self.process = root, None
+    def __init__(self, root): self.root, self.process, self.temp = root, None, None
     def __enter__(self):
         exe, cfg = adapter.verify(self.root)
         if sum(1 for p in (self.root / "auth").glob("*.json") if p.is_file()) != 1:
             raise ValueError("Complete login-codex first; this demo uses one supplier account")
         with socket.socket() as sock: running = sock.connect_ex(("127.0.0.1", adapter.PORT)) == 0
         if running: raise ValueError("Adapter port is already in use. Stop your existing adapter before starting this supplier")
-        if not running:
-            self.process = subprocess.Popen([str(exe), "-config", str(self.root / "config.yaml"), "-local-model"],
+        try:
+            self.management_secret=secrets.token_urlsafe(32);temporary=copy.deepcopy(cfg)
+            temporary['management']['secret-key']=self.management_secret
+            self.temp=self.root/("supplier-"+uuid.uuid4().hex+".json");adapter.private_write(self.temp,temporary)
+            self.process = subprocess.Popen([str(exe), "-config", str(self.temp), "-local-model"],
                 cwd=self.root, env=adapter.clean_environment(self.root), stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-        try:
             for _ in range(30):
                 if self.process and self.process.poll() is not None: raise ValueError("Adapter exited before startup")
                 try:
@@ -39,6 +42,7 @@ class AdapterProcess:
                         time.sleep(.2)
                         continue  # Listener may become ready before OAuth models finish loading.
                     self.config = cfg
+                    self.official_reader=official_reserve.OfficialUsageReader(adapter.PORT,self.management_secret)
                     return self
                 except (OSError, urllib.error.URLError): time.sleep(.2)
             raise ValueError("Adapter model catalog did not become ready; verify the isolated login")
@@ -49,9 +53,10 @@ class AdapterProcess:
             self.process.terminate()
             try: self.process.wait(timeout=5)
             except subprocess.TimeoutExpired: self.process.kill(); self.process.wait()
+        if self.temp:self.temp.unlink(missing_ok=True)
     def __exit__(self, *_): self.close()
 
-def make_gateway(home, name, model, host, port, cfg):
+def prepare_home(home, name, model):
     home = home.expanduser().resolve()
     expected = {"model": model, "backend": "subscription-adapter",
                 "upstream": "http://127.0.0.1:" + str(adapter.PORT) + "/v1",
@@ -64,7 +69,11 @@ def make_gateway(home, name, model, host, port, cfg):
         if any(current.get(k) != v for k, v in expected.items()) or current.get("name") != name:
             raise ValueError("This supplier directory has a different name/model/backend; use its original settings or a new directory")
     else: channel.initialize(home, name, **expected)
-    return channel.Gateway((host, port), home, upstream_key=cfg["access"]["api-keys"][0])
+    return home
+
+def make_gateway(home, name, model, host, port, cfg, reserve_guard=None):
+    home=prepare_home(home,name,model)
+    return channel.Gateway((host, port), home, upstream_key=cfg["access"]["api-keys"][0],reserve_guard=reserve_guard)
 
 def main():
     # Dashboard-owned Windows suppliers receive CTRL_BREAK_EVENT.  Python's
@@ -82,6 +91,8 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8781)
     parser.add_argument("--allow-private-http", action="store_true")
+    parser.add_argument("--official-reserve-floor",type=float,
+                        help="Temporary fail-closed official weekly remaining-percent floor")
     parser.add_argument("--stop-file", type=Path,
                         help="Private dashboard-owned stop marker; normal CLI use should omit this")
     args = parser.parse_args()
@@ -93,10 +104,14 @@ def main():
         raise ValueError("Stop marker must be a new file directly inside the supplier directory")
     with AdapterProcess(adapter.default_root().resolve()) as upstream:
         if args.model not in upstream.models: raise ValueError("Requested model is absent from adapter catalog")
-        server = make_gateway(home, args.name, args.model, args.host, args.port, upstream.config)
+        prepared=prepare_home(home,args.name,args.model);guard=None
+        if args.official_reserve_floor is not None:
+            guard=official_reserve.ReserveGuard(prepared,upstream.official_reader,args.official_reserve_floor)
+        server = channel.Gateway((args.host,args.port),prepared,upstream_key=upstream.config["access"]["api-keys"][0],reserve_guard=guard)
         print(json.dumps({"ready": True, "supplier": args.name, "model": args.model,
                           "gateway": "http://" + args.host + ":" + str(server.server_port),
-                          "adapter": "loopback only; started by this supplier and stopped on exit"}), flush=True)
+                          "adapter": "loopback only; started by this supplier and stopped on exit",
+                          "reserve": channel.local_status(home).get('official_reserve')}), flush=True)
         print("Keep this window open. Ctrl+C stops the supplier. Create the invitation in a second terminal.", flush=True)
         try:
             if stop_file:
@@ -108,6 +123,7 @@ def main():
         except KeyboardInterrupt: pass
         finally:
             server.server_close()
+            if guard:guard.close()
             if stop_file: stop_file.unlink(missing_ok=True)
 
 if __name__ == "__main__":
