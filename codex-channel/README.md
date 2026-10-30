@@ -1,5 +1,7 @@
 # TokenCoin 双向通道 Demo 0.3.0
 
+**周额度百分比尚未开放：** 当前发布版仍按请求次数限制。开发中的准确归属与校准实验见 [WEEKLY_BUDGET.md](WEEKLY_BUDGET.md)。
+
 **快速连接与安装入口：[INSTALL.md](INSTALL.md)。** 双方安装同一个插件，复制并粘贴邀请串即可连接，无需手动配置局域网或 VPN。默认使用 iroh 自动直连 / 加密中继；Windows x64 与 Apple 芯片 Mac 使用固定版本网络组件。
 
 以下保留高级私网命令行工作流及 v0.1.4 的历史验证记录。首次使用按上方 INSTALL.md 的快速连接步骤操作。

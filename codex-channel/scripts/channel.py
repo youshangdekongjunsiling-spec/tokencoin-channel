@@ -6,6 +6,8 @@ import argparse, contextlib, hashlib, http.server, ipaddress, json, os, re, secr
 import sqlite3, ssl, subprocess, sys, time, urllib.error, urllib.parse, urllib.request, uuid
 from pathlib import Path
 from mock_responses import make_events
+import task_attribution
+from usage_accounting import request_features, reported_usage
 
 MAX_BODY = 1024 * 1024
 MAX_RESPONSE = 8 * 1024 * 1024
@@ -191,7 +193,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             cfg=self.server.cfg
             if body.get('model')!=cfg['model']: raise ChannelError(403,'model_not_allowed')
             if body.get('stream') is not True: raise ChannelError(400,'stream_true_required')
-            if body.get('background') or body.get('previous_response_id'):
+            if body.get('background') or body.get('previous_response_id') or body.get('conversation') is not None:
                 raise ChannelError(400,'use_stateless_foreground_requests')
             functions=body.get('tools',[])
             def local_tools(ts,depth=0):
@@ -204,8 +206,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             body['max_output_tokens']=min(cap,cfg['max_output_tokens']); body['store']=False
             idem=self.headers.get('Idempotency-Key') or uuid.uuid4().hex
             if len(idem)>128: raise ChannelError(400,'idempotency_key_too_long')
+            metadata=body.get('client_metadata')
+            hint=self.headers.get('Thread-Id') or (metadata.get('thread_id') if isinstance(metadata,dict) else None) or self.headers.get('Session-Id') or body.get('prompt_cache_key')
+            if hint is not None and (not isinstance(hint,str) or not 1 <= len(hint.encode('utf-8')) <= task_attribution.MAX_HINT_BYTES):
+                raise ChannelError(400,'invalid_thread_hint')
             request_id=reserve(self.server.home,token,idem)
-            body.pop('prompt_cache_key',None)
+            with db(self.server.home) as c:
+                owner=c.execute('SELECT channel_id FROM requests WHERE id=?',(request_id,)).fetchone()['channel_id']
+            attribution=task_attribution.prepare(self.server.home,owner,request_id,body,hint)
+            if cfg['backend']=='subscription-adapter':body=attribution['body']
+            else:body.pop('prompt_cache_key',None)
+            usage={'source':'unavailable', **request_features(body), 'supplier_task_id':attribution['supplier_task_id']}
             def start_stream():
                 nonlocal started
                 self.send_response(200); self.send_header('Content-Type','text/event-stream')
@@ -222,6 +233,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 outcome='completed_synthetic'
             else:
                 headers={'Authorization':'Bearer '+self.server.upstream_key,'Content-Type':'application/json','Accept':'text/event-stream'}
+                if cfg['backend']=='subscription-adapter':headers.update(attribution['headers'])
                 req=urllib.request.Request(cfg['upstream']+'/responses',data=dump(body).encode(),headers=headers)
                 try: upstream=OPENER.open(req,timeout=30)
                 except urllib.error.HTTPError as e:
@@ -246,10 +258,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             try:event=json.loads(raw)
                             except (ValueError,UnicodeError):continue
                             if event.get('type')=='response.completed':
-                                completed=True; terminal_sent=True; reported=event.get('response',{}).get('usage',{}) or {}
-                                usage={'source':'upstream_reported'}
-                                for key in ('input_tokens','output_tokens','total_tokens'):
-                                    if type(reported.get(key)) is int and reported[key]>=0:usage[key]=reported[key]
+                                completed=True; terminal_sent=True
+                                usage=reported_usage(event.get('response'),body)
+                                usage['supplier_task_id']=attribution['supplier_task_id']
                             elif event.get('type') in ('response.failed','error'):outcome='upstream_failed'
                     if completed:outcome='completed_upstream'
                     elif outcome!='upstream_failed':outcome='unknown_incomplete_stream'

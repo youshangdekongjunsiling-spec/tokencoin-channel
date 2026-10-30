@@ -1,5 +1,7 @@
 # TokenCoin 0.3 · 复制邀请即可连接
 
+**周额度百分比尚未开放：** 当前发布版仍按请求次数限制。开发中的准确归属与校准实验见 [WEEKLY_BUDGET.md](WEEKLY_BUDGET.md)。
+
 双方下载同一份完整 ZIP。需要 Python 3.10+ 和 Codex CLI。快速连接支持 Windows x64 与 Apple 芯片 Mac（原生 ARM64 Python），无需配置局域网、VPN 或路由器端口。
 
 ## 安装
