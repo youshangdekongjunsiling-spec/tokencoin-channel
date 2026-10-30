@@ -387,3 +387,5 @@ dialog p { margin: 0 0 16px; color: var(--muted); }
   }
 }
 [hidden]{display:none!important}.check{display:flex;align-items:center;gap:10px;margin:16px 0}.check input{width:auto}form{display:grid;gap:14px}.list-item small{display:block;margin-top:5px}.two-col{align-items:start}.wide{grid-column:1/-1}hr{border:0;border-top:1px solid var(--line);margin:28px 0}.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);max-width:90vw;z-index:100}button:disabled{opacity:.55;cursor:wait}pre{white-space:pre-wrap;overflow-wrap:anywhere}h2{font-size:23px}h3{margin-top:0}input[type=file]{font-size:13px}footer{margin-top:30px;line-height:1.8}
+
+[hidden] { display: none !important; }

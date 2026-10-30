@@ -34,6 +34,8 @@ else:
 import channel
 import run_supplier
 import setup_adapter
+import setup_quick_connect
+import quick_invite
 
 
 MAX_BODY = 1024 * 1024
@@ -98,6 +100,9 @@ class DashboardState:
         self.jobs: dict[str, dict] = {}
         self.job_processes: dict[str, subprocess.Popen] = {}
         self.closing = False
+        self.quick_lock = threading.RLock()
+        self.quick_node = None
+        self.quick_peers = {}
         self.settings_path = self.root / "settings.json"
         try:
             self.settings = self._load_settings()
@@ -271,11 +276,18 @@ class DashboardState:
             raise ApiError(400, "unsafe_listener")
         if mode == "subscription" and port == 0:
             raise ApiError(400, "subscription_requires_fixed_port")
+        connection = body.get("connection", "manual")
+        if connection not in ("manual", "quick"):
+            raise ApiError(400, "invalid_connection_mode")
+        if connection == "quick" and (host != "127.0.0.1" or allow):
+            raise ApiError(400, "quick_requires_loopback")
         return {"mode": mode, "name": name, "model": model, "host": host, "port": port,
-                "allow_private_http": allow}
+                "allow_private_http": allow, "connection": connection}
 
     def start_supplier(self, body: dict) -> dict:
         fields = self._supplier_fields(body)
+        if fields["connection"] == "quick":
+            self._quick()
         with self.lock:
             if self.mock_server or self.supplier_process and self.supplier_process.poll() is None:
                 raise ApiError(409, "supplier_already_running")
@@ -318,6 +330,9 @@ class DashboardState:
         return {"state": state, **fields, "base_url": "http://" + fields["host"] + ":" + str(fields["port"])}
 
     def stop_supplier(self) -> dict:
+        with self.quick_lock:
+            if self.quick_node:
+                self.quick_node.stop_supplier()
         with self.lock:
             stopped, forced = False, False
             if self.mock_server:
@@ -388,6 +403,17 @@ class DashboardState:
         expected_url = "http://" + str(active.get("host")) + ":" + str(active.get("port"))
         if base_url.rstrip("/") != expected_url:
             raise ApiError(400, "invite_url_must_match_supplier")
+        ticket = None
+        if active.get("connection") == "quick":
+            if self.supplier_status()["state"] != "ready":
+                raise ApiError(409, "supplier_not_ready")
+            try:
+                with self.quick_lock:
+                    ticket = self._quick().start_supplier("127.0.0.1", active["port"])
+            except ApiError:
+                raise
+            except Exception:
+                raise ApiError(502, "quick_connection_failed") from None
         setup_adapter.private_directory(self.exports)
         out = self.exports / ("invite-" + uuid.uuid4().hex + ".json")
         try:
@@ -396,7 +422,13 @@ class DashboardState:
         except (OSError, ValueError, KeyError):
             out.unlink(missing_ok=True)
             raise ApiError(400, "invite_creation_failed")
-        return {"invitation": invitation, "metadata": metadata}
+        if ticket:
+            invitation["transport"] = {"kind": "iroh", "ticket": ticket}
+            _private_replace(out, invitation)
+        result = {"invitation": invitation, "metadata": metadata}
+        if ticket:
+            result["connection_string"] = quick_invite.encode(invitation)
+        return result
 
     def revoke(self, body: dict) -> dict:
         channel_id = body.get("channel_id")
@@ -410,14 +442,37 @@ class DashboardState:
     def import_peer(self, body: dict) -> dict:
         name = body.get("name")
         invitation = body.get("invitation")
+        if isinstance(invitation, str):
+            try:
+                invitation = quick_invite.decode(invitation)
+            except (ValueError, TypeError, KeyError):
+                raise ApiError(400, "invalid_quick_invitation") from None
         allow = body.get("allow_private_http", False)
         if not isinstance(name, str) or not PEER_RE.fullmatch(name) or not isinstance(invitation, dict) or type(allow) is not bool:
             raise ApiError(400, "invalid_peer_import")
         setup_adapter.private_directory(self.consumer_home)
+        if channel.peer_path(self.consumer_home, name).exists():
+            raise ApiError(409, "peer_already_exists")
         temporary = self.root / ("import-" + uuid.uuid4().hex + ".json")
+        local_url = None
+        if "transport" in invitation:
+            try:
+                quick_invite.validate(invitation)
+                with self.quick_lock:
+                    local_url = self._quick().connect_peer(invitation["transport"]["ticket"], invitation["token"])
+                invitation = dict(invitation, base_url=local_url, allow_private_http=False)
+                allow = False
+            except ApiError:
+                raise
+            except Exception:
+                raise ApiError(400, "invalid_quick_invitation") from None
+        succeeded = False
         try:
             channel.private_write(temporary, invitation)
             status = channel.join(self.consumer_home, name, temporary, allow)
+            if local_url:
+                self.quick_peers[name] = local_url
+            succeeded = True
             return {"name": name, "status": status}
         except urllib.error.HTTPError as error:
             error.close()
@@ -426,6 +481,70 @@ class DashboardState:
             raise ApiError(400, "invitation_import_failed")
         finally:
             temporary.unlink(missing_ok=True)
+            if local_url and not succeeded:
+                with self.quick_lock:
+                    self.quick_node.disconnect_peer(local_url)
+
+    def _quick(self):
+        with self.quick_lock:
+            if self.closing:
+                raise ApiError(409, "dashboard_closing")
+            if self.quick_node is None:
+                try:
+                    import quick_connect
+                    setup_quick_connect.load()
+                    key_path = self.root / "connection-identity.json"
+                    if not key_path.exists():
+                        channel.private_write(key_path, {"version": 1, "secret": secrets.token_hex(32)})
+                    key = json.loads(key_path.read_text("utf-8"))
+                    if key.get("version") != 1:
+                        raise ValueError("Invalid connection identity")
+                    secret = bytes.fromhex(key["secret"])
+                    if len(secret) != 32:
+                        raise ValueError("Invalid connection identity")
+                    self.quick_node = quick_connect.QuickNode(secret_key=secret, validator=self._quick_authorized)
+                except (ImportError, OSError, ValueError, KeyError):
+                    raise ApiError(409, "quick_runtime_unavailable") from None
+            return self.quick_node
+
+    def _quick_authorized(self, token):
+        if self.closing or self.supplier_status()["state"] != "ready":
+            return False
+        try:
+            with channel.db(self.supplier_home) as db:
+                row = channel.auth(db, token)
+                return row["remaining"] > 0
+        except (channel.ChannelError, OSError, ValueError):
+            return False
+
+    def _ready_peer(self, name):
+        with self.quick_lock:
+            peer = channel.peer_read(self.consumer_home, name)
+            if peer.get("transport"):
+                if name not in self.quick_peers:
+                    try:
+                        quick_invite.validate(peer)
+                        url = self._quick().connect_peer(peer["transport"]["ticket"], peer["token"])
+                    except ApiError:
+                        raise
+                    except Exception:
+                        raise ApiError(502, "quick_connection_failed") from None
+                    try:
+                        peer["base_url"] = url
+                        _private_replace(channel.peer_path(self.consumer_home, name), peer)
+                    except BaseException:
+                        self.quick_node.disconnect_peer(url)
+                        raise
+                    self.quick_peers[name] = url
+                peer["base_url"] = self.quick_peers[name]
+            return peer
+
+    def quick_setup(self):
+        if any(j["kind"] == "network_install" and j["status"] in ("queued", "running") for j in self.jobs.values()):
+            raise ApiError(409, "network_install_running")
+        job = self._new_job("network_install")
+        threading.Thread(target=self._run_quiet_job, args=(job, [sys.executable, "-B", str(Path(setup_quick_connect.__file__).resolve())]), daemon=True).start()
+        return {"job_id": job["id"]}
 
     def peers(self) -> list[dict]:
         directory = self.consumer_home / "peers"
@@ -440,7 +559,7 @@ class DashboardState:
                 peer = channel.peer_read(self.consumer_home, name)
                 result.append({"name": name, "supplier": peer.get("supplier"), "model": peer.get("model"),
                                "backend": peer.get("backend"), "base_url": peer.get("base_url"),
-                               "expires": peer.get("expires")})
+                               "expires": peer.get("expires"), "connection": "quick" if peer.get("transport") else "manual"})
             except (OSError, ValueError, KeyError):
                 result.append({"name": name, "error": "peer_state_unavailable"})
         return result
@@ -449,7 +568,7 @@ class DashboardState:
         if not PEER_RE.fullmatch(name):
             raise ApiError(400, "invalid_peer_name")
         try:
-            return channel.peer_status(channel.peer_read(self.consumer_home, name))
+            return channel.peer_status(self._ready_peer(name))
         except urllib.error.HTTPError as error:
             error.close()
             raise ApiError(409, "peer_rejected_status")
@@ -469,7 +588,7 @@ class DashboardState:
         if not workdir.is_dir():
             raise ApiError(400, "workdir_not_found")
         try:
-            peer = channel.peer_read(self.consumer_home, name)
+            peer = self._ready_peer(name)
             channel.peer_status(peer)
         except (OSError, ValueError, KeyError, urllib.error.URLError, urllib.error.HTTPError):
             raise ApiError(409, "peer_not_ready")
@@ -532,7 +651,9 @@ class DashboardState:
         with self.lock:
             jobs = [{k: v for k, v in job.items() if k != "log"} for job in self.jobs.values()]
         return {"adapter": self.adapter_status(), "supplier": self.supplier_status(),
-                "peers": self.peers(), "jobs": jobs}
+                "peers": self.peers(), "jobs": jobs,
+                "network": {"runtime_installed": (setup_quick_connect.default_root() / "runtime.whl").is_file(),
+                            "active": self.quick_node is not None}}
 
     def close(self) -> None:
         with self.lock:
@@ -554,7 +675,14 @@ class DashboardState:
                         if process.poll() is None:
                             self._kill_group(process)
         finally:
-            self._release_state_lock()
+            try:
+                with self.quick_lock:
+                    if self.quick_node:
+                        self.quick_node.close()
+                        self.quick_node = None
+                    self.quick_peers.clear()
+            finally:
+                self._release_state_lock()
         if supplier_error:
             raise supplier_error
 
@@ -712,7 +840,9 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
         try:
             self._guard_api(mutation=True)
             path, body, state = urllib.parse.urlsplit(self.path).path, self._body(), self.server.state
-            if path == "/api/adapter/setup":
+            if path == "/api/network/setup":
+                value = state.quick_setup()
+            elif path == "/api/adapter/setup":
                 value = state.adapter_setup(body.get("action"))
             elif path == "/api/supplier/start":
                 value = state.start_supplier(body)

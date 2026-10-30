@@ -1,8 +1,8 @@
-# TokenCoin 双向通道 Demo 0.2.1
+# TokenCoin 双向通道 Demo 0.3.0
 
-**图形面板与安装入口：[INSTALL.md](INSTALL.md)。** 同一个插件管理“提供我的额度”和“使用朋友的额度”；支持官方 MCP 侧栏入口，另附本机浏览器启动器。
+**快速连接与安装入口：[INSTALL.md](INSTALL.md)。** 双方安装同一个插件，复制并粘贴邀请串即可连接，无需手动配置局域网或 VPN。默认使用 iroh 自动直连 / 加密中继；Windows x64 与 Apple 芯片 Mac 使用固定版本网络组件。
 
-以下保留命令行工作流及 v0.1.4 的历史验证记录。
+以下保留高级私网命令行工作流及 v0.1.4 的历史验证记录。首次使用按上方 INSTALL.md 的快速连接步骤操作。
 
 **现在已验证：Windows 真实 Codex CLI 通过通道读取文件、看到 3 个测试失败、修复 calculator.py 一行代码，再运行 3 个测试全部通过；测试文件未改。** 工作目录内使用 MXC workspace-write 沙箱，CLI 退出码为 0，共 5 轮模型请求。CLI 用时 23.359 秒，其中 5 轮模型响应流生命周期合计 19.437 秒（含上游等待和生成，不是纯网络往返）；适配器冷启动另用 3.25 秒。macOS 实机和朋友双机仍待验证。证据见 `development-verification.json`；前一轮文本任务证据保留在 `cli-real-verification.json`。
 

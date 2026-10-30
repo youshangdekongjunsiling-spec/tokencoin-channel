@@ -1,19 +1,74 @@
 {
-  "version": "0.2.1",
+  "version": "0.3.0",
   "date": "2026-10-30",
-  "windows_real_dashboard_chinese_task": {
-    "status": "completed",
-    "exit_code": 0,
-    "chinese_output_readable": true,
-    "channel_revoked": true,
-    "supplier_stopped": true
+  "platform": "Windows x64",
+  "tests": {
+    "passed": 39,
+    "skipped": 0,
+    "command": "python -B -m unittest discover -s codex-channel/tests -v"
   },
-  "two_mock_nodes_bidirectional_invite_and_revoke": "passed",
-  "mcp_stdio_utf8_and_ui_metadata": "passed",
-  "camofox_mock_start_stop_ui": "passed",
-  "windows_real_adapter_graceful_exit": "passed",
-  "macos_physical_device": "not_tested",
-  "real_two_device_network": "not_tested",
-  "desktop_plugin_install_and_listing": "verified",
-  "native_global_sidebar_button_render": "pending_host_reload_verification"
+  "public_network_synthetic": {
+    "runtime": "iroh 1.2.0",
+    "public_relay_mode": true,
+    "supplier_prepare_seconds": 4.295,
+    "pair_seconds": 0.599,
+    "mock_stream_seconds": 0.041,
+    "response_bytes": 3283,
+    "selected_paths_before_request": [
+      {
+        "selected": false,
+        "relay": true,
+        "direct": false,
+        "rtt_ms": 215
+      },
+      {
+        "selected": true,
+        "relay": false,
+        "direct": true,
+        "rtt_ms": 0
+      }
+    ],
+    "sse_completed": true,
+    "revocation_rejected_new_request": true,
+    "cross_machine_verified": false,
+    "real_model_used": false,
+    "transport_threads_after_close": 0
+  },
+  "real_codex_cli": {
+    "job_status": "completed",
+    "returncode": 0,
+    "chinese_result_readable": true,
+    "elapsed_seconds": 3.715,
+    "transport": "iroh automatic direct/relay",
+    "two_distinct_endpoint_identities": true,
+    "cross_machine_verified": false,
+    "raw_prompt_or_credentials_saved": false,
+    "requests": [
+      {
+        "status": "completed_upstream",
+        "usage": {
+          "source": "upstream_reported",
+          "input_tokens": 15659,
+          "output_tokens": 8,
+          "total_tokens": 15667
+        }
+      }
+    ],
+    "channel_revoked": true,
+    "supplier_stopped": true,
+    "transport_threads_after_close": 0
+  },
+  "ui": {
+    "browser": "CamoFox",
+    "quick_mode_default": true,
+    "manual_ip_fields_hidden": true,
+    "paste_invitation_visible": true
+  },
+  "not_verified": [
+    "macOS physical execution",
+    "two-machine WAN/NAT traversal",
+    "public relay payload fallback under forced direct failure",
+    "native Codex far-left button render"
+  ],
+  "scope": "Two distinct cryptographic endpoints on the same Windows computer. Public relay reachable; payload path upgraded to local direct. No cross-machine latency claim."
 }

@@ -38,6 +38,19 @@ class PluginTests(unittest.TestCase):
   request=json.dumps({'jsonrpc':'2.0','id':1,'method':'tools/list'})+'\n'
   p=subprocess.run([sys.executable,'-B',str(Path(mcp_server.__file__))],input=request.encode('utf-8'),capture_output=True,timeout=15)
   result=json.loads(p.stdout.decode('utf-8'));self.assertIn('TokenCoin 双向通道',result['result']['tools'][0]['title']);self.assertEqual(p.returncode,0)
+ def test_manifest_launch_from_plugin_root(self):
+  import subprocess
+  root=Path(__file__).resolve().parents[1]
+  config=json.loads((root/'.mcp.json').read_text('utf-8'))['mcpServers']['tokencoin']
+  self.assertEqual(config['cwd'],'.')
+  self.assertFalse(any('${' in arg for arg in config['args']))
+  requests=[{'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-11-25'}},{'jsonrpc':'2.0','id':2,'method':'tools/list'}]
+  # Match Codex launch semantics: resolve cwd only, pass args literally without a shell.
+  process=subprocess.run([config['command'],*config['args']],cwd=root/config['cwd'],input=''.join(json.dumps(r)+'\n' for r in requests).encode(),capture_output=True,timeout=15)
+  self.assertEqual(process.returncode,0,process.stderr.decode('utf-8',errors='replace'))
+  replies=[json.loads(line) for line in process.stdout.decode('utf-8').splitlines()]
+  self.assertEqual(replies[0]['result']['serverInfo']['name'],'tokencoin-channel')
+  self.assertIn('tokencoin_dashboard',[t['name'] for t in replies[1]['result']['tools']])
  def test_no_arbitrary_http_bridge(self):
   self.assertTrue(self.a.action({'method':'GET','path':'https://example.com'})['isError'])
   self.assertTrue(self.a.action({'method':'GET','path':'/api/peers/../status'})['isError'])

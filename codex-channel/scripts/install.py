@@ -12,6 +12,8 @@ def main():
  calls=[[codex,'plugin','marketplace','add',str(marketplace)],[codex,'plugin','add','tokencoin-channel@tokencoin-demo']]
  if args.dry_run:
   print(json.dumps({'python':sys.executable,'plugin':str(plugin),'commands':calls},ensure_ascii=False,indent=2));return
+ import setup_quick_connect
+ setup_quick_connect.install()
  config=plugin/'.mcp.json';original=config.read_bytes();data=json.loads(original);data['mcpServers']['tokencoin']['command']=sys.executable
  temp=config.with_name('.mcp.install.tmp')
  try:
