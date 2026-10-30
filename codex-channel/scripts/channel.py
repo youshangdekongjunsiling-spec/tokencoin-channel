@@ -6,6 +6,9 @@ import argparse, contextlib, hashlib, http.server, ipaddress, json, os, re, secr
 import sqlite3, ssl, subprocess, sys, time, urllib.error, urllib.parse, urllib.request, uuid
 from pathlib import Path
 from mock_responses import make_events
+import task_attribution
+import weekly_budget
+from usage_accounting import request_features, reported_usage
 
 MAX_BODY = 1024 * 1024
 MAX_RESPONSE = 8 * 1024 * 1024
@@ -80,12 +83,16 @@ def initialize(home, name, model='tokencoin-demo', backend='mock', upstream=None
             expires REAL, remaining INTEGER, revoked INTEGER DEFAULT 0);
             CREATE TABLE requests(id TEXT PRIMARY KEY, channel_id TEXT, idem TEXT, status TEXT,
             started REAL, ended REAL, usage TEXT, UNIQUE(channel_id,idem));''')
+    with db(home) as c:weekly_budget.initialize(c)
+    task_attribution.initialize_schema(home)
     private_write(home / 'node.json', cfg)
     return cfg
 
-def invite(home, base_url, out, label='friend', requests=20, minutes=60, allow_private_http=False):
+def invite(home, base_url, out, label='friend', requests=20, minutes=60, allow_private_http=False, weekly_percent=None):
     if not 1 <= requests <= 1000 or not 1 <= minutes <= 1440: raise ValueError('Invalid request or expiry limit')
     cfg = config(home); base_url = valid_url(base_url, allow_private_http)
+    if weekly_percent is not None and cfg['backend']!='subscription-adapter':
+        raise ValueError('Estimated weekly budgets require a subscription supplier')
     if urllib.parse.urlsplit(base_url).path not in ('', '/'): raise ValueError('Use the gateway origin, without /v1')
     channel_id, token = uuid.uuid4().hex, secrets.token_urlsafe(32)
     expiry = time.time() + minutes * 60
@@ -93,25 +100,34 @@ def invite(home, base_url, out, label='friend', requests=20, minutes=60, allow_p
                  backend=cfg['backend'], base_url=base_url, token=token, expires=expiry,
                  allow_private_http=allow_private_http)
     # The invitation itself is a scoped reusable access credential until expiry/revocation.
+    task_attribution.initialize_schema(home)
+    budget=None
     with db(home) as c:
+        weekly_budget.initialize(c)
+        c.execute('BEGIN IMMEDIATE')
         c.execute('INSERT INTO channels(id,label,token_hash,expires,remaining) VALUES(?,?,?,?,?)',
                   (channel_id,label,secret_hash(token),expiry,requests))
+        if weekly_percent is not None:budget=weekly_budget.create_grant(c,channel_id,weekly_percent)
         try: private_write(out, value)
         except BaseException: c.rollback(); raise
     return {'channel_id':channel_id, 'invitation_file':str(Path(out).resolve()),
-            'supplier':cfg['name'], 'backend':cfg['backend'], 'remaining_requests':requests}
+            'supplier':cfg['name'], 'backend':cfg['backend'], 'remaining_requests':requests, 'budget':budget}
 
 def auth(c, token):
     row = c.execute('SELECT * FROM channels WHERE token_hash=?',(secret_hash(token),)).fetchone()
     if not row or row['revoked'] or row['expires'] <= time.time(): raise ChannelError(401,'channel_invalid_or_expired')
     return row
 
-def reserve(home, token, idem):
+def reserve(home, token, idem, body=None):
     with db(home) as c:
         c.execute('BEGIN IMMEDIATE'); row = auth(c,token)
         if c.execute('SELECT 1 FROM requests WHERE channel_id=? AND idem=?',(row['id'],idem)).fetchone():
             raise ChannelError(409,'duplicate_request_not_replayed')
         if row['remaining'] <= 0: raise ChannelError(429,'request_allowance_exhausted')
+        if isinstance(body,dict) and 'service_tier' not in body and c.execute('SELECT 1 FROM weekly_budget_grants WHERE channel_id=?',(row['id'],)).fetchone():
+            body['service_tier']='default'
+        try:weekly_budget.check(c,row['id'],body)
+        except weekly_budget.BudgetError as e:raise ChannelError(429,e.code) from None
         if c.execute("SELECT 1 FROM requests WHERE channel_id=? AND status='running'",(row['id'],)).fetchone():
             raise ChannelError(429,'one_request_at_a_time')
         request_id = uuid.uuid4().hex
@@ -127,9 +143,12 @@ def finish(home, request_id, status, usage=None):
 def local_status(home):
     cfg = config(home)
     with db(home) as c:
+        weekly_budget.initialize(c)
+        calibration=weekly_budget.active_profile(c)
         channels=[dict(r) for r in c.execute('SELECT id,label,expires,remaining,revoked FROM channels')]
+        for item in channels:item['budget']=weekly_budget.summary(c,item['id'])
         requests=[dict(r) for r in c.execute('SELECT id,channel_id,status,started,ended,usage FROM requests ORDER BY started DESC LIMIT 30')]
-    return dict(supplier=cfg['name'],model=cfg['model'],backend=cfg['backend'],channels=channels,requests=requests)
+    return dict(supplier=cfg['name'],model=cfg['model'],backend=cfg['backend'],channels=channels,requests=requests,calibration=calibration)
 
 def revoke(home, channel_id):
     with db(home) as c:
@@ -144,7 +163,9 @@ class Gateway(http.server.ThreadingHTTPServer):
         self.upstream_key=upstream_key if upstream_key is not None else (os.environ.get(self.cfg['key_env'],'') if self.cfg['key_env'] else '')
         if self.cfg['backend']!='mock' and not self.upstream_key:
             raise ValueError('Set the configured upstream credential environment variable before starting')
+        task_attribution.initialize_schema(home)
         with db(home) as c:
+            weekly_budget.initialize(c)
             c.execute("UPDATE requests SET status='unknown_after_restart',ended=? WHERE status='running'",(time.time(),))
         super().__init__(address, Handler)
 
@@ -166,10 +187,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             if self.path=='/health': return self.json_reply(200,{'ready':True})
             if self.path!='/v1/channel': raise ChannelError(404,'route_not_found')
-            with db(self.server.home) as c: row=auth(c,self.token())
+            with db(self.server.home) as c:
+                row=auth(c,self.token())
+                budget=weekly_budget.summary(c,row['id'])
             cfg=self.server.cfg
             self.json_reply(200,dict(channel_id=row['id'],supplier=cfg['name'],backend=cfg['backend'],
-                                   model=cfg['model'],remaining_requests=row['remaining'],expires=row['expires']))
+                                   model=cfg['model'],remaining_requests=row['remaining'],expires=row['expires'],budget=budget))
         except ChannelError as e:self.json_reply(e.status,{'error':{'code':e.code}})
     def do_POST(self):
         started=False; request_id=None; outcome='unknown'; usage=None; terminal_sent=False
@@ -191,7 +214,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             cfg=self.server.cfg
             if body.get('model')!=cfg['model']: raise ChannelError(403,'model_not_allowed')
             if body.get('stream') is not True: raise ChannelError(400,'stream_true_required')
-            if body.get('background') or body.get('previous_response_id'):
+            if body.get('background') or body.get('previous_response_id') or body.get('conversation') is not None:
                 raise ChannelError(400,'use_stateless_foreground_requests')
             functions=body.get('tools',[])
             def local_tools(ts,depth=0):
@@ -204,8 +227,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             body['max_output_tokens']=min(cap,cfg['max_output_tokens']); body['store']=False
             idem=self.headers.get('Idempotency-Key') or uuid.uuid4().hex
             if len(idem)>128: raise ChannelError(400,'idempotency_key_too_long')
-            request_id=reserve(self.server.home,token,idem)
-            body.pop('prompt_cache_key',None)
+            metadata=body.get('client_metadata')
+            hint=self.headers.get('Thread-Id') or (metadata.get('thread_id') if isinstance(metadata,dict) else None) or self.headers.get('Session-Id') or body.get('prompt_cache_key')
+            if hint is not None and (not isinstance(hint,str) or not 1 <= len(hint.encode('utf-8')) <= task_attribution.MAX_HINT_BYTES):
+                raise ChannelError(400,'invalid_thread_hint')
+            request_id=reserve(self.server.home,token,idem,body)
+            with db(self.server.home) as c:
+                owner=c.execute('SELECT channel_id FROM requests WHERE id=?',(request_id,)).fetchone()['channel_id']
+            attribution=task_attribution.prepare(self.server.home,owner,request_id,body,hint)
+            if cfg['backend']=='subscription-adapter':body=attribution['body']
+            else:body.pop('prompt_cache_key',None)
+            usage={'source':'unavailable', **request_features(body), 'supplier_task_id':attribution['supplier_task_id']}
             def start_stream():
                 nonlocal started
                 self.send_response(200); self.send_header('Content-Type','text/event-stream')
@@ -222,6 +254,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 outcome='completed_synthetic'
             else:
                 headers={'Authorization':'Bearer '+self.server.upstream_key,'Content-Type':'application/json','Accept':'text/event-stream'}
+                if cfg['backend']=='subscription-adapter':headers.update(attribution['headers'])
                 req=urllib.request.Request(cfg['upstream']+'/responses',data=dump(body).encode(),headers=headers)
                 try: upstream=OPENER.open(req,timeout=30)
                 except urllib.error.HTTPError as e:
@@ -246,10 +279,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             try:event=json.loads(raw)
                             except (ValueError,UnicodeError):continue
                             if event.get('type')=='response.completed':
-                                completed=True; terminal_sent=True; reported=event.get('response',{}).get('usage',{}) or {}
-                                usage={'source':'upstream_reported'}
-                                for key in ('input_tokens','output_tokens','total_tokens'):
-                                    if type(reported.get(key)) is int and reported[key]>=0:usage[key]=reported[key]
+                                completed=True; terminal_sent=True
+                                usage=reported_usage(event.get('response'),body)
+                                usage['supplier_task_id']=attribution['supplier_task_id']
                             elif event.get('type') in ('response.failed','error'):outcome='upstream_failed'
                     if completed:outcome='completed_upstream'
                     elif outcome!='upstream_failed':outcome='unknown_incomplete_stream'
@@ -351,7 +383,7 @@ def main(argv=None):
     def home(q):q.add_argument('--home',required=True,type=Path)
     q=s.add_parser('init');home(q);q.add_argument('--name',required=True);q.add_argument('--model',default='tokencoin-demo');q.add_argument('--backend',choices=['mock','api','subscription-adapter'],default='mock');q.add_argument('--upstream');q.add_argument('--key-env');q.add_argument('--allow-private-http',action='store_true')
     q=s.add_parser('serve');home(q);q.add_argument('--host',default='127.0.0.1');q.add_argument('--port',type=int,default=8781);q.add_argument('--cert');q.add_argument('--key');q.add_argument('--allow-private-http',action='store_true')
-    q=s.add_parser('invite');home(q);q.add_argument('--url',required=True);q.add_argument('--out',required=True,type=Path);q.add_argument('--label',default='friend');q.add_argument('--requests',type=int,default=20);q.add_argument('--minutes',type=int,default=60);q.add_argument('--allow-private-http',action='store_true')
+    q=s.add_parser('invite');home(q);q.add_argument('--url',required=True);q.add_argument('--out',required=True,type=Path);q.add_argument('--label',default='friend');q.add_argument('--requests',type=int,default=20);q.add_argument('--weekly-percent',type=float);q.add_argument('--minutes',type=int,default=60);q.add_argument('--allow-private-http',action='store_true')
     q=s.add_parser('join');home(q);q.add_argument('--peer',required=True);q.add_argument('--invite',required=True,type=Path);q.add_argument('--allow-private-http',action='store_true')
     q=s.add_parser('status');home(q);q.add_argument('--peer')
     q=s.add_parser('revoke');home(q);q.add_argument('--channel',required=True)
@@ -375,7 +407,7 @@ def main(argv=None):
             try:server.serve_forever()
             except KeyboardInterrupt:pass
             finally:server.server_close()
-        elif a.command=='invite':print(dump(invite(a.home,a.url,a.out,a.label,a.requests,a.minutes,a.allow_private_http)))
+        elif a.command=='invite':print(dump(invite(a.home,a.url,a.out,a.label,a.requests,a.minutes,a.allow_private_http,getattr(a,'weekly_percent',None))))
         elif a.command=='join':print(dump(join(a.home,a.peer,a.invite,a.allow_private_http)))
         elif a.command=='status':print(dump(peer_status(peer_read(a.home,a.peer)) if a.peer else local_status(a.home)))
         elif a.command=='revoke':print(dump(revoke(a.home,a.channel)))

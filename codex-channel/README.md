@@ -1,10 +1,11 @@
-# TokenCoin 双向通道 Demo 0.3.0
+# TokenCoin 双向通道 Demo 0.4.0 实验预发布
 
+**当前状态：** 周额度百分比门禁、每朋友任务隔离、未知用量暂停、完整官方任务账单替换已经实现。百分比模式只适用于 `subscription-adapter`；API Key 路径保持原模式，次数用于应急封顶。现有 4 个真实代理任务账单仍为 `unavailable`，项目没有真实拟合参数，10% 真实共享当前无法启用。准确计量边界见 [WEEKLY_BUDGET.md](WEEKLY_BUDGET.md)。
 **快速连接与安装入口：[INSTALL.md](INSTALL.md)。** 双方安装同一个插件，复制并粘贴邀请串即可连接，无需手动配置局域网或 VPN。默认使用 iroh 自动直连 / 加密中继；Windows x64 与 Apple 芯片 Mac 使用固定版本网络组件。
 
-以下保留高级私网命令行工作流及 v0.1.4 的历史验证记录。首次使用按上方 INSTALL.md 的快速连接步骤操作。
+以下保留高级私网命令行工作流和历史验证记录。首次使用按上方 INSTALL.md 的快速连接步骤操作。命令行邀请示例采用旧版次数模式，适合应急与兼容测试。
 
-**现在已验证：Windows 真实 Codex CLI 通过通道读取文件、看到 3 个测试失败、修复 calculator.py 一行代码，再运行 3 个测试全部通过；测试文件未改。** 工作目录内使用 MXC workspace-write 沙箱，CLI 退出码为 0，共 5 轮模型请求。CLI 用时 23.359 秒，其中 5 轮模型响应流生命周期合计 19.437 秒（含上游等待和生成，不是纯网络往返）；适配器冷启动另用 3.25 秒。macOS 实机和朋友双机仍待验证。证据见 `development-verification.json`；前一轮文本任务证据保留在 `cli-real-verification.json`。
+**历史验证：Windows 真实 Codex CLI 通过通道读取文件、看到 3 个测试失败、修复 calculator.py 一行代码，再运行 3 个测试全部通过；测试文件未改。** 工作目录内使用 MXC workspace-write 沙箱，CLI 退出码为 0，共 5 轮模型请求。CLI 用时 23.359 秒，其中 5 轮模型响应流生命周期合计 19.437 秒（含上游等待和生成，不代表纯网络往返）；适配器冷启动另用 3.25 秒。macOS 实机和朋友双机仍待验证。这些是此前的开发验证记录，本版新增验证见仓库的 `docs/weekly-meter-verification.json`。
 
 本指南先让朋友用你的供应节点，再交换角色。两个人使用同一个安装包，Windows 与 macOS 可以互联。供应方负责保持电脑、网络和服务在线；消费者在自己的电脑启动 Codex CLI。供应方能看到经过通道的请求上下文，所以首次任务只用下方不含私密数据的例子。
 
@@ -18,11 +19,11 @@
 真实模型 → 沿原路返回朋友的 CLI
 ```
 
-插件提供操作引导，Python 程序负责通道。它启动独立 CLI，不切换当前桌面对话的模型。API 与订阅共用网关协议；本轮验证的是本人订阅路径。跨人使用前，供应方需确认上游允许的使用范围。以下网络与邀请操作也可先用 `mock` 演练。
+插件提供操作引导，Python 程序负责通道。它启动独立 CLI，不切换当前桌面对话的模型。API 与订阅共用网关协议；本轮验证的是本人订阅路径。跨人使用前，供应方需确认上游允许的使用范围。网络与邀请操作可先用 `mock` 演练；周比例模式会拒绝 mock 节点。
 
 ## 1. 双方准备与安装插件
 
-双方各自解压整个 ZIP，保留 `demo/.agents/plugins/marketplace.json` 和 `demo/codex-channel` 的相对位置。macOS 的 `.agents` 是隐藏目录，终端仍可正常使用，不要只复制可见的子文件。
+双方各自解压整个 ZIP，保留 `.agents/plugins/marketplace.json` 和 `codex-channel` 的相对位置。macOS 的 `.agents` 是隐藏目录，终端仍可正常使用，不要只复制可见的子文件。
 
 需要 Python 3.10+ 和 Codex CLI。先在终端确认：
 
@@ -33,7 +34,7 @@
 
 Windows 若只有 `py -3` 可用，后文全部 `python` 可替换为 `py -3`。没有 CLI 时按 [Codex 官方安装页](https://learn.chatgpt.com/docs/cli)安装；已有 Node/npm 的环境也可使用 `npm install -g @openai/codex`。本机验收版本为 `0.166.0-alpha.5.1`；其他版本需确认支持下面的 `plugin` 命令。
 
-进入解压后的 **demo 根目录**，两平台执行相同命令：
+进入解压后的 **安装包根目录（codex-channel 的上一级）**，两平台执行相同命令：
 
 ```sh
 codex plugin marketplace add .
@@ -42,7 +43,7 @@ codex plugin add tokencoin-channel@tokencoin-demo
 
 成功后新开 Codex 会话，输入“使用 TokenCoin 双人通道插件，按 README 带我建立通道”。也可运行 `codex` 后进入 `/plugins`，选择 `tokencoin-demo` 中的 `tokencoin-channel` 安装。当前机器的上述命令已在独立 CODEX_HOME 内验证；尚未替你更改正在使用的全局插件配置。[官方本地市场说明](https://developers.openai.com/plugins/build/plugins)
 
-后续命令在 `demo/codex-channel` 目录执行。插件安装后加载的是缓存副本；使用新包时重新注册新包的 demo 路径并执行 `plugin add`，然后新开会话。代码也可直接运行，无需等待插件界面。
+后续命令在 `codex-channel` 目录执行。插件安装后加载的是缓存副本；使用新包时重新注册新包的 demo 路径并执行 `plugin add`，然后新开会话。代码也可直接运行，无需等待插件界面。
 
 ## 2. 每个终端先设置自己的路径
 
@@ -75,7 +76,7 @@ chmod 700 "$TC_STATE"
 | --- | --- |
 | `python -B scripts/setup_adapter.py login` | `python3 -B scripts/setup_adapter.py login` |
 
-首次会下载固定版本 CLIProxyAPI 8.0.47 并校验 SHA256，然后打开官方授权页面。本人完成授权，保持终端开启直到完成。不将密码、token、回调 URL 或授权文件发送给另一方。Windows 也可双击 `login-codex.cmd`；Mac 可用终端命令，避免 `.command` 双击权限问题。
+首次会下载固定版本 CLIProxyAPI 8.0.47 并校验 SHA256，然后打开官方授权页面。本人完成授权，保持终端开启直到完成。不将密码、token、回调 URL 或授权文件发送给另一方。两平台均可使用上表终端命令登录。
 
 登录保存在自己的独立目录。接下来 `run_supplier.py` 会自动启动适配器、在进程内使用其入口 key。无需手动设置 key 环境变量，也无需另开 `start-adapter`。若你之前单独开过适配器窗口，先 Ctrl+C 停止；供应脚本会拒绝已占用的 18317，避免接错服务。
 
@@ -125,7 +126,7 @@ python3 -B scripts/channel.py invite --home "$TC_STATE/supplier" --url http://10
 
 这个例子允许 30 分钟内最多 5 次模型请求尝试。一个 Codex 任务可能包含多次模型请求，5 次请求不等于 5 个任务，也不等于金额限额。记下输出里的 `channel_id`，撤销时用它。
 
-通过双方选择的私密文件传输方式，把 `alice-to-bob.json` 交给朋友，保存在朋友自己的私有状态目录。它是一张可在限制内重复使用的通行证，不是一次性连接码；不要展示文件正文、贴进聊天或发到教学网站。文件不包含你的原始账号授权。
+通过双方选择的私密文件传输方式，把 `alice-to-bob.json` 交给朋友，保存在朋友自己的私有状态目录。它是一张可在限制内重复使用的通行证。当前没有一次性连接码；不要展示文件正文、贴进聊天或发到教学网站。文件不包含你的原始账号授权。
 
 ## 7. 朋友接收并运行第一次 Codex 任务
 
@@ -223,7 +224,7 @@ python3 -B scripts/channel.py codex --home "$TC_STATE/consumer" --peer alice-dev
 | HTTP 401 | 邀请是否过期、撤销；重新发邀请并换一个 peer 名 |
 | HTTP 429 | 请求次数已用完，或同一通道已有请求在运行 |
 | HTTP 400/403 或模型不可用 | 供应侧账号与模型兼容性；目录列出模型不等于账号一定能调用 |
-| 有回答但本地工具失败 | 文本链路与工具权限分开检查；当前不宣称本地工具已通过 |
+| 有回答但本地工具失败 | 文本链路与工具权限分开检查；确认工作目录、沙箱和本机 Codex CLI 状态 |
 
 ## 合成演示、API 入口与开发验证
 
@@ -231,4 +232,4 @@ python3 -B scripts/channel.py codex --home "$TC_STATE/consumer" --peer alice-dev
 
 独立 API key 模式仍支持：用 `channel.py init --backend api --upstream https://api.openai.com/v1 --key-env MY_MODEL_API_KEY --model MODEL --home PRIVATE_DIR --name NAME` 初始化，再 `channel.py serve --home PRIVATE_DIR`。供应者自行配置进程环境中的 key；本项目尚未创建 API 项目或验证 API 计费路径。
 
-自动测试：`python -B tests/test_channel.py` 和 `python -B tests/test_supplier.py`。测试仅用合成数据，真实验收证据另存。请求次数与 token 报告均不构成金额上限；签名、账号权限、模型目录和真实用量也分别需要相应证据。
+自动测试覆盖网关、供应启动、快速连接、任务归属、用量记录、校准、预算门禁、管理 API 和 MCP allowlist。0.4.0 整轮 96 项测试通过，无跳过。合成测试与真实验收证据分开记录。请求次数与 token 报告均不构成金额上限；签名、账号权限、模型目录和真实用量分别需要相应证据。

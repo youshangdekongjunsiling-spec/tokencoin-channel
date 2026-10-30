@@ -1,56 +1,49 @@
-# TokenCoin 双向通道 Demo 0.3
+# TokenCoin 双向通道 Demo 0.4.0
 
-**额度功能开发进度：** 正式下载版仍为 v0.3.0，按请求次数限制。任务归属隔离、缓存用量记录与离线校准代码见 [开发分支](https://github.com/youshangdekongjunsiling-spec/tokencoin-channel/tree/work/weekly-usage-calibration)，方法与实测边界见 [说明](https://github.com/youshangdekongjunsiling-spec/tokencoin-channel/blob/work/weekly-usage-calibration/codex-channel/WEEKLY_BUDGET.md)。真实周比例拟合和百分比放行尚未验收。
+双方安装同一个插件，复制邀请串即可连接，无需手动配置局域网或 VPN。推理经供应方节点，文件与工具在使用者电脑执行。
 
-**双方安装同一个插件，复制邀请串给朋友，对方粘贴即可连接，无需手动组局域网或 VPN。** 可以向朋友提供自己的模型调用，也可以使用朋友提供的通道。
-
-![快速连接面板](docs/interface.png)
+**本版为实验预发布。** 已接入按朋友分别计算的周比例估算、误差参考范围、到限暂停和官方任务账单替换。默认分享比例 10%。目前没有完整的真实校准样本，安装包不附带真实系数，因此真实百分比邀请尚不能启用。不得用测试参数开放真实共享。
 
 ## 下载与安装
 
-从 [v0.3.0 Release](https://github.com/youshangdekongjunsiling-spec/tokencoin-channel/releases/tag/v0.3.0) 下载 `tokencoin-channel-v0.3.0.zip`，完整解压并保留隐藏的 `.agents` 目录。
+下载 [v0.4.0 实验安装包](https://github.com/youshangdekongjunsiling-spec/tokencoin-channel/releases/tag/v0.4.0)，完整解压，保留隐藏的 `.agents` 目录。
 
 - Windows x64：双击 `install-windows.cmd`。
-- Apple 芯片 Mac：终端进入解压目录，运行 `bash install-macos.command`。需要原生 ARM64 Python。
-- 双方需要 Python 3.10+ 和 Codex CLI。安装器会下载并校验固定版本 iroh 网络组件，保存在个人 TokenCoin 目录。
-- 重新打开 Codex，查找 **TokenCoin 双向通道**。侧栏按钮由宿主加载，当前位置仍需宿主实测。
-- 也可直接用 `start-panel-windows.cmd` 或 `bash start-panel-macos.command` 打开本机浏览器面板，每台电脑同时保持一个面板。
+- Apple 芯片 Mac：终端进入解压目录，执行 `bash install-macos.command`，使用原生 ARM64 Python。
+- 双方需要 Python 3.10+ 和 Codex CLI。安装器校验固定版本 iroh 1.2.0 并配置插件。
+- 重新打开 Codex，查找 TokenCoin 双向通道。宿主侧栏位置仍待实测；也可用包内 `start-panel-windows.cmd` / `bash start-panel-macos.command` 打开同一面板。
 
-[详细安装与双人操作步骤](codex-channel/INSTALL.md) · [高级私网命令行指南](codex-channel/README.md)
+[最短操作指南](codex-channel/INSTALL.md) · [周额度估算说明](codex-channel/WEEKLY_BUDGET.md) · [高级命令行与历史验证](codex-channel/README.md)
 
-## 第一次使用
+## 连接与额度
 
-1. 提供方在自己的面板登录 Codex，保持“快速连接”，填显示名和模型，启动共享。
-2. 设定次数与有效期，点“生成邀请串”，复制后私下发给朋友。
-3. 朋友在右侧填写简称、粘贴邀请串，点“连接朋友”。本版需粘贴到面板，尚未注册点击链接自动唤起。
-4. 朋友选择额度提供者、自己电脑的工作目录与权限，运行任务。
-5. 反方向使用时，朋友也发一份独立邀请给你。双方各自保留撤销权。
+1. 供应方在自己的面板完成 Codex 授权，选择快速连接并启动共享。
+2. 百分比模式先导入用真实任务账单拟合并独立验证的校准文件，再选择分享比例和邀请期限。当前真实样本不足，程序会拒绝无参数的百分比邀请。
+3. 生成邀请串并私下发送。朋友粘贴邀请后，选择自己电脑的工作目录和权限运行任务。
+4. 反向共享时交换角色、另建独立邀请。双方均可撤销。
 
-原始账号授权保留在提供方电脑。邀请串含受限通行证，请勿公开、贴进 AI 聊天或日志。供应者能看到模型请求上下文；文件工具在消费者电脑执行。
+本人和各朋友的请求分别归属；估算不使用账号总表差额。完整账单按任务替换估算，重复导入不重复扣减。缺少用量时暂停，参考范围上端到限后暂停下一请求；已放行的一次生成可能超额。经验范围没有统计置信度或硬上界含义。
 
-## 自动连接原理
+校准和账单目前由供应方手动导入，来源与适用账号需供应方核对。授权按固定截止时间到期，不自动按周续期；账号切换和官方周重置尚未自动识别。旧次数模式保留高级兼容测试，不能代替周比例。API Key 接入仍走高级 CLI。
 
 ```text
-朋友 Codex CLI → 朋友本机转接 → iroh 加密直连 / 中继 → 你的本机网关 → 你的模型授权
+朋友 Codex CLI → 本机转接 → iroh 加密直连 / 中继 → 供应方网关 → 供应方模型授权
 ```
 
-插件自动尝试直连，必要时使用 iroh 公共中继。中继看不到加密内容，可观察连接与流量元数据。公共中继适合 Demo，有限流且无 SLA；双方均需在线。后续可评估独立中继与短配对码服务。当前使用高熵长邀请串。
+供应方能看到模型请求上下文。原始账号凭证留在供应方；邀请串包含受限通行证，请勿公开。公共中继适合 Demo，有限流且无可用性保证；双方均需在线。
 
-## 已验证与边界
+## 验证与未完成项
 
-- 39 项测试通过，无跳过，涵盖原通道及快速连接、SSE、无效授权、限额、撤销、连接恢复、清理。
-- Windows 本机两个不同加密端点通过邀请连接；公共中继可达，连接随后使用本机直连。
-- 真实 Codex CLI 经快速通道完成一次中文短句任务，退出码 0，测试邀请已撤销、服务已关闭。
-- macOS 实机、朋友异地双机和强制中继传输仍待验证；本机时间不代表跨机延迟。证据见 [verification.json](docs/verification.json)。
-- 次数按模型请求尝试计，一个任务可有多轮；不提供金额/token 硬限额。中断不自动重放。
-- 默认面板支持订阅适配器和 mock；API 路径保留高级 CLI。当前桌面对话的模型配置不自动切换。
-- 上游服务决定订阅可共享范围。
+- 本版 96 项本机合成与回归测试通过，无跳过：任务隔离、用量记录、校准、预算暂停、幂等对账、管理权限与快速连接。
+- 浏览器核对默认 10%、未知用量显示及撤销操作；界面测试使用合成参数。
+- 历史 Windows 真实 Codex CLI 已通过通道完成短句任务与隔离目录修复/测试。新增真实网关探针记录了完整 token 明细，但四个任务的官方周占比仍不可用。
+- 真实预测准确度、完整账单闭环、macOS 实机和朋友异地双机均未验收。本机连接时延不能代替双机实测。
 
-## 开发验证
+[本版证据](docs/weekly-meter-verification.json) · [快速连接历史证据](docs/verification.json)
 
 ```sh
 python -B codex-channel/scripts/setup_quick_connect.py
 python -B -m unittest discover -s codex-channel/tests -v
 ```
 
-快速连接基于 [iroh 1.2.0](https://pypi.org/project/iroh/1.2.0/)，[中继限制](https://docs.iroh.computer/concepts/relays)与[安全说明](https://docs.iroh.computer/deployment/security-privacy)见官方文档。账号适配器固定 CLIProxyAPI 8.0.47，单独下载校验；发布包不含账号、个人状态、邀请或上游二进制。
+上游服务决定订阅可共享范围。发布包只含源码、说明和测试，不含账号、邀请、个人状态或上游二进制。

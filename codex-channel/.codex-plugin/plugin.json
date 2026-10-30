@@ -1,6 +1,6 @@
 {
   "name": "tokencoin-channel",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Create, use and revoke a two-person Codex inference channel; demo-first workflow.",
   "skills": "./skills/",
   "interface": {

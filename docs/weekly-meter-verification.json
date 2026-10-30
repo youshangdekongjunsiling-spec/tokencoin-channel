@@ -1,0 +1,68 @@
+{
+  "date": "2026-10-30",
+  "published_release": "0.4.0",
+  "exact_weekly_budget_ready": false,
+  "codex_source_commit": "5c6ef3d1a6769a3ea78080792bd67a2c42affdcc",
+  "adapter_version": "8.0.47",
+  "adapter_source_commit": "90c447d3a8727d115aa7552ec93ce023736ed492",
+  "supplier_account_matches_official_usage": true,
+  "task_endpoint_http_status": 200,
+  "new_proxy_task_usage": "unavailable",
+  "native_control_usage": "partial",
+  "native_control_data_lag_minutes_observed": 83,
+  "synthetic_and_regression_tests": {
+    "command": "python -B -m unittest discover -s codex-channel/tests -v",
+    "passed": 96,
+    "skipped": 0,
+    "duration_seconds": 51.826
+  },
+  "real_model_requests_this_investigation": 4,
+  "updated_gateway": {
+    "gateway_completed": true,
+    "recorded_usage": {
+      "source": "upstream_reported",
+      "requested_model": "gpt-6.1-sol",
+      "requested_reasoning_effort": "low",
+      "input_tokens": 314,
+      "output_tokens": 5,
+      "total_tokens": 319,
+      "cached_input_tokens": 0,
+      "reasoning_tokens": 0,
+      "uncached_input_tokens": 314,
+      "reported_model": "gpt-6.1-sol",
+      "reported_service_tier": "default",
+      "total_consistent": true
+    },
+    "canonical_task_is_supplier_owned": true,
+    "gateway_test_state_removed": true,
+    "temporary_config_removed": true,
+    "adapter_stopped": true
+  },
+  "limitations": [
+    "No calibrated coefficients from real account data; no real percentage invitation created",
+    "Empirical range is not a confidence interval or hard bound; one admitted request can overshoot",
+    "No macOS or two-device verification for these changes",
+    "Task query availability and delay observed on one account only",
+    "Manual supplier profile/task-report import; no production automatic billing bridge or account/reset tracking"
+  ],
+  "test_scope": "v0.4.0 source checkout; synthetic HTTP and local encrypted endpoints. No real weekly-percentage grant trial.",
+  "offline_calibration_tests": {
+    "command": "python -B -m unittest discover -s demo/codex-channel/tests -p test_calibrate_usage.py -v",
+    "passed": 11,
+    "real_prediction_accuracy": "not_measured"
+  },
+  "experimental_weekly_runtime": "implemented_and_synthetic_tests_pass",
+  "ui_verification": {
+    "default_share_percent": 10,
+    "unknown_total_not_zero": true,
+    "no_statement_not_displayed_as_official_zero": true,
+    "revoke_clicked_and_verified": true,
+    "scope": "isolated synthetic fixture"
+  },
+  "isolated_codex_install": {
+    "version": "0.4.0",
+    "marketplace_add": "passed",
+    "plugin_add": "passed",
+    "personal_login_unchanged": true
+  }
+}

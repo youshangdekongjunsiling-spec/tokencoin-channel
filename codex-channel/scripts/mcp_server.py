@@ -5,7 +5,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parent))
 import dashboard
 ROOT=Path(__file__).resolve().parent.parent
 URI="ui://tokencoin/dashboard-v030"
-VERSION="0.3.0"
+VERSION="0.4.0"
 class Plugin:
  def __init__(self,home=None):
   self.home=home;self.server=None;self.thread=None
@@ -24,7 +24,7 @@ class Plugin:
  def action(self,args):
   method,path=args.get('method'),args.get('path','')
   reads=path in ('/api/status','/api/peers') or bool(re.fullmatch(r'/api/peers/[A-Za-z0-9_-]{1,40}/status',path)) or bool(re.fullmatch(r'/api/jobs/[0-9a-f]{32}',path))
-  writes=path in ('/api/network/setup','/api/adapter/setup','/api/supplier/start','/api/supplier/stop','/api/supplier/invites','/api/supplier/revoke','/api/peers/import','/api/codex/jobs')
+  writes=path in ('/api/network/setup','/api/adapter/setup','/api/supplier/start','/api/supplier/stop','/api/supplier/invites','/api/supplier/revoke','/api/supplier/calibration','/api/supplier/reconcile','/api/peers/import','/api/codex/jobs')
   if not ((method=='GET' and reads) or (method=='POST' and writes)):return {'content':[{'type':'text','text':'Unsupported UI operation.'}],'isError':True,'_meta':{'data':{'error':{'code':'unsupported_action'}}}}
   try:self.ensure_server()
   except dashboard.ApiError as error:

@@ -114,4 +114,58 @@ class ChannelTests(unittest.TestCase):
         self.assertNotIn('(I)',acl)
         self.assertEqual(acl.count('(F)'),1)
 
+    def test_foreign_conversation_and_invalid_hint_do_not_dispatch(self):
+        self.assertEqual(self.request(body={'model':'tokencoin-demo','stream':True,'conversation':'owner-conversation'})[0],400)
+        self.assertEqual(self.request(headers={'Thread-Id':'x'*257})[0],400)
+        self.assertEqual(channel.local_status(self.a)['requests'],[])
+
+    def test_supplier_task_headers_and_cache_usage_through_gateway(self):
+        captured=[]
+        class Upstream(channel.http.server.BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_POST(self):
+                captured.append((json.loads(self.rfile.read(int(self.headers['Content-Length']))),dict(self.headers)))
+                event={'type':'response.completed','response':{'model':'resolved-model','usage':{'input_tokens':1000,'output_tokens':200,'total_tokens':1200,'input_tokens_details':{'cached_tokens':800},'output_tokens_details':{'reasoning_tokens':150}}}}
+                data=('data: '+channel.dump(event)+'\n\n').encode()
+                self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+        upstream=channel.http.server.ThreadingHTTPServer(('127.0.0.1',0),Upstream)
+        thread=threading.Thread(target=upstream.serve_forever,kwargs={'poll_interval':.02},daemon=True);thread.start();self.servers.append((upstream,thread))
+        os.environ['TC_ATTR_TEST_KEY']='synthetic-adapter-secret'
+        try:
+            for backend in ('subscription-adapter','api'):
+                h=self.root/('attribution-'+backend)
+                channel.initialize(h,'Meter test',backend=backend,upstream=self.url(upstream)+'/v1',key_env='TC_ATTR_TEST_KEY')
+                server=self.start(h);peers=[]
+                for name in ('friend-one','friend-two'):
+                    path=self.root/(backend+'-'+name+'.json');channel.invite(h,self.url(server),path,label=name)
+                    peers.append(json.loads(path.read_text(encoding='utf-8')))
+                seen=[]
+                for peer in (peers[0],peers[0],peers[1]):
+                    body={'model':'tokencoin-demo','stream':True,'input':'hello','prompt_cache_key':'owner-thread','client_metadata':{'thread_id':'owner-thread','parent_thread_id':'owner-parent'},'reasoning':{'effort':'low'}}
+                    self.assertEqual(self.request(peer,body,{'Thread-Id':'owner-thread','X-Codex-Turn-Metadata':'forged-owner'})[0],200)
+                    state=self.wait_done(h);payload,headers=captured[-1];headers={k.lower():v for k,v in headers.items()}
+                    if backend=='subscription-adapter':
+                        supplier_id=payload['client_metadata']['thread_id'];seen.append(supplier_id)
+                        self.assertNotEqual(supplier_id,'owner-thread')
+                        self.assertEqual(headers['thread-id'],supplier_id)
+                        self.assertEqual(headers['x-client-request-id'],supplier_id)
+                        self.assertEqual(json.loads(headers['x-codex-turn-metadata'])['thread_id'],supplier_id)
+                        self.assertNotIn('owner-parent',json.dumps(payload))
+                    else:
+                        self.assertNotIn('x-codex-turn-metadata',headers)
+                        self.assertNotIn('prompt_cache_key',payload)
+                    usage=json.loads(state['requests'][0]['usage'])
+                    self.assertEqual(usage['cached_input_tokens'],800)
+                    self.assertEqual(usage['uncached_input_tokens'],200)
+                    self.assertEqual(usage['output_tokens'],200)
+                    self.assertEqual(usage['reasoning_tokens'],150)
+                    self.assertEqual(usage['requested_reasoning_effort'],'low')
+                if backend=='subscription-adapter':
+                    self.assertEqual(seen[0],seen[1]);self.assertNotEqual(seen[1],seen[2])
+                for request in state['requests']:
+                    with channel.db(h) as c:
+                        row=c.execute('SELECT channel_id FROM task_attribution_requests WHERE request_id=?',(request['id'],)).fetchone()
+                        self.assertEqual(row['channel_id'],request['channel_id'])
+        finally:del os.environ['TC_ATTR_TEST_KEY']
+
 if __name__=='__main__':unittest.main(verbosity=2)

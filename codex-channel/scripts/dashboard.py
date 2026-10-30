@@ -32,6 +32,7 @@ else:
     import fcntl
 
 import channel
+import weekly_budget
 import run_supplier
 import setup_adapter
 import setup_quick_connect
@@ -389,16 +390,76 @@ class DashboardState:
                 result["local"] = {"error": "state_unavailable"}
         return result
 
+    def _real_supplier_config(self) -> dict:
+        node = self.supplier_home / "node.json"
+        database = self.supplier_home / "state.sqlite3"
+        if not node.exists() or not database.exists():
+            raise ApiError(409, "supplier_not_initialized")
+        try:
+            config = channel.config(self.supplier_home)
+        except (OSError, ValueError, KeyError):
+            raise ApiError(409, "supplier_state_incomplete") from None
+        if config.get("backend") == "mock" or (self.settings.get("supplier") or {}).get("mode") != "subscription":
+            raise ApiError(409, "weekly_budget_requires_subscription")
+        return config
+
+    @staticmethod
+    def _budget_error(error: weekly_budget.BudgetError) -> ApiError:
+        return ApiError(400, error.code)
+
+    def install_calibration(self, body: dict) -> dict:
+        config = self._real_supplier_config()
+        profile = body.get("profile")
+        valid_until = body.get("valid_until")
+        if not isinstance(profile, dict):
+            raise ApiError(400, "invalid_profile")
+        profile = dict(profile)
+        profile["validated_until"] = valid_until
+        stratum = profile.get("stratum")
+        if not isinstance(stratum, dict) or stratum.get("model") != config.get("model"):
+            raise ApiError(400, "profile_model_mismatch")
+        try:
+            with channel.db(self.supplier_home) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                return weekly_budget.install_profile(connection, profile)
+        except weekly_budget.BudgetError as error:
+            raise self._budget_error(error) from None
+
+    def reconcile_budget(self, body: dict) -> dict:
+        self._real_supplier_config()
+        channel_id = body.get("channel_id")
+        report = body.get("report")
+        if not isinstance(channel_id, str) or not CHANNEL_RE.fullmatch(channel_id):
+            raise ApiError(400, "invalid_channel_id")
+        if not isinstance(report, dict):
+            raise ApiError(400, "invalid_official_payload")
+        try:
+            with channel.db(self.supplier_home) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                return weekly_budget.reconcile(connection, channel_id, report)
+        except weekly_budget.BudgetError as error:
+            raise self._budget_error(error) from None
+
     def create_invite(self, body: dict) -> dict:
         if not self.mock_server and not (self.supplier_process and self.supplier_process.poll() is None):
             raise ApiError(409, "supplier_not_running")
         base_url = _safe_text(body.get("base_url"), 300)
         label = _safe_text(body.get("label", "friend"), 80)
-        requests = body.get("requests", 20)
+        budget_mode = body.get("budget_mode", "legacy_requests")
+        if budget_mode not in ("legacy_requests", "estimated_weekly"):
+            raise ApiError(400, "invalid_budget_mode")
+        requests = body.get("requests", 1000 if budget_mode == "estimated_weekly" else 20)
+        weekly_percent = body.get("weekly_percent") if budget_mode == "estimated_weekly" else None
         minutes = body.get("minutes", 60)
         allow = body.get("allow_private_http", False)
         if type(requests) is not int or type(minutes) is not int or type(allow) is not bool:
             raise ApiError(400, "invalid_invite_limits")
+        if budget_mode == "estimated_weekly":
+            if self.mock_server:
+                raise ApiError(409, "weekly_budget_requires_subscription")
+            if isinstance(weekly_percent, bool) or not isinstance(weekly_percent, (int, float)):
+                raise ApiError(400, "invalid_budget_percent")
+            self._real_supplier_config()
         active = self.settings.get("supplier") or {}
         expected_url = "http://" + str(active.get("host")) + ":" + str(active.get("port"))
         if base_url.rstrip("/") != expected_url:
@@ -417,8 +478,14 @@ class DashboardState:
         setup_adapter.private_directory(self.exports)
         out = self.exports / ("invite-" + uuid.uuid4().hex + ".json")
         try:
-            metadata = channel.invite(self.supplier_home, base_url, out, label, requests, minutes, allow)
+            metadata = channel.invite(
+                self.supplier_home, base_url, out, label, requests, minutes, allow,
+                weekly_percent,
+            )
             invitation = json.loads(out.read_text("utf-8"))
+        except weekly_budget.BudgetError as error:
+            out.unlink(missing_ok=True)
+            raise self._budget_error(error) from None
         except (OSError, ValueError, KeyError):
             out.unlink(missing_ok=True)
             raise ApiError(400, "invite_creation_failed")
@@ -850,6 +917,10 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 value = state.stop_supplier()
             elif path == "/api/supplier/invites":
                 value = state.create_invite(body)
+            elif path == "/api/supplier/calibration":
+                value = state.install_calibration(body)
+            elif path == "/api/supplier/reconcile":
+                value = state.reconcile_budget(body)
             elif path == "/api/supplier/revoke":
                 value = state.revoke(body)
             elif path == "/api/peers/import":
