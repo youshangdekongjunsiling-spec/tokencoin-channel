@@ -1,0 +1,20 @@
+{
+  "name": "tokencoin-channel",
+  "version": "0.2.0",
+  "description": "Create, use and revoke a two-person Codex inference channel; demo-first workflow.",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "TokenCoin 双向通道",
+    "shortDescription": "连接朋友、双向共享、限额与撤销",
+    "developerName": "TokenCoin project",
+    "category": "Developer Tools",
+    "defaultPrompt": [
+      "带我运行双人通道 demo",
+      "创建一个限额通道给朋友",
+      "查看并撤销我的通道"
+    ],
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/icon.svg"
+  },
+  "mcpServers": "./.mcp.json"
+}

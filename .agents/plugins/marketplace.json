@@ -1,0 +1,20 @@
+{
+  "name": "tokencoin-demo",
+  "interface": {
+    "displayName": "TokenCoin 本地 Demo"
+  },
+  "plugins": [
+    {
+      "name": "tokencoin-channel",
+      "source": {
+        "source": "local",
+        "path": "./codex-channel"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

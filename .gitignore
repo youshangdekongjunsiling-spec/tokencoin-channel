@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env*
+auth/
+state/
+exports/
+peers/
+*.sqlite3*
+*.log
+*.zip
+.mcp.install.tmp
+.DS_Store
