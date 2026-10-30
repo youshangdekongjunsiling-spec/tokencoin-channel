@@ -1,0 +1,19 @@
+{
+  "version": "0.2.1",
+  "date": "2026-10-30",
+  "windows_real_dashboard_chinese_task": {
+    "status": "completed",
+    "exit_code": 0,
+    "chinese_output_readable": true,
+    "channel_revoked": true,
+    "supplier_stopped": true
+  },
+  "two_mock_nodes_bidirectional_invite_and_revoke": "passed",
+  "mcp_stdio_utf8_and_ui_metadata": "passed",
+  "camofox_mock_start_stop_ui": "passed",
+  "windows_real_adapter_graceful_exit": "passed",
+  "macos_physical_device": "not_tested",
+  "real_two_device_network": "not_tested",
+  "desktop_plugin_install_and_listing": "verified",
+  "native_global_sidebar_button_render": "pending_host_reload_verification"
+}

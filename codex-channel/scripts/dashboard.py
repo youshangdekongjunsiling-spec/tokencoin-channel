@@ -512,7 +512,7 @@ class DashboardState:
         job.update(status="running", started=time.time())
         try:
             process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                       text=True, env=env, shell=False,
+                                       text=True, encoding="utf-8", errors="replace", env=env, shell=False,
                                        creationflags=self._process_group_flags(), start_new_session=os.name != "nt")
             self._track_job_process(job, process)
             output, _ = process.communicate(prompt, timeout=900)

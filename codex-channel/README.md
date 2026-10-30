@@ -1,4 +1,4 @@
-# TokenCoin 双向通道 Demo 0.2.0
+# TokenCoin 双向通道 Demo 0.2.1
 
 **图形面板与安装入口：[INSTALL.md](INSTALL.md)。** 同一个插件管理“提供我的额度”和“使用朋友的额度”；支持官方 MCP 侧栏入口，另附本机浏览器启动器。
 

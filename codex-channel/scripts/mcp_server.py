@@ -4,8 +4,8 @@ import sys,json,threading,urllib.request,urllib.error,re,base64,contextlib
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import dashboard
 ROOT=Path(__file__).resolve().parent.parent
-URI="ui://tokencoin/dashboard-v020"
-VERSION="0.2.0"
+URI="ui://tokencoin/dashboard-v021"
+VERSION="0.2.1"
 class Plugin:
  def __init__(self,home=None):
   self.home=home;self.server=None;self.thread=None

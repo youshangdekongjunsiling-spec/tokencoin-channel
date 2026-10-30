@@ -6,7 +6,7 @@
 
 ## 下载与安装
 
-从 [Releases](https://github.com/youshangdekongjunsiling-spec/tokencoin-channel/releases) 下载 `tokencoin-channel-v0.2.0.zip`，完整解压，保留隐藏的 `.agents` 文件夹。
+从 [Releases](https://github.com/youshangdekongjunsiling-spec/tokencoin-channel/releases) 下载 `tokencoin-channel-v0.2.1.zip`，完整解压，保留隐藏的 `.agents` 文件夹。
 
 - **Windows**：双击 `install-windows.cmd`。
 - **macOS**：终端进入解压目录，运行 `bash install-macos.command`。
@@ -31,7 +31,7 @@
 - 面板启动独立 Codex CLI 任务，不切换已有桌面对话的模型。
 - 限额按模型请求尝试次数计算，一个开发任务可能含多次请求；不提供金额/token 硬限额。
 - 撤销拒绝新请求，已受理请求可能完成。没有自动公网发现、打洞或中继服务。
-- 已验证 Windows 本机真实开发调用；新面板双向 mock、授权边界、适配器生命周期已测。macOS 和真实双机仍需实机测试。
+- 已验证 Windows 本机真实开发调用；新面板双向 mock、授权边界、适配器生命周期已测；新面板真实中文 CLI 任务成功，退出码 0。macOS 和真实双机仍需实机测试。
 - 订阅的可共享范围由上游服务规则决定，本项目不改变上游授权条款。
 - CLIProxyAPI 固定版本由安装流程从[上游发布页](https://github.com/router-for-me/CLIProxyAPI/releases/tag/v8.0.47)单独下载并校验；发行包不包含账号状态或适配器二进制。
 

@@ -33,6 +33,11 @@ class PluginTests(unittest.TestCase):
    result=other.action({'method':'GET','path':'/api/status'})
    self.assertTrue(result['isError']);self.assertEqual(result['_meta']['data']['error']['code'],'dashboard_already_running')
   finally:other.close()
+ def test_utf8_stdio(self):
+  import subprocess
+  request=json.dumps({'jsonrpc':'2.0','id':1,'method':'tools/list'})+'\n'
+  p=subprocess.run([sys.executable,'-B',str(Path(mcp_server.__file__))],input=request.encode('utf-8'),capture_output=True,timeout=15)
+  result=json.loads(p.stdout.decode('utf-8'));self.assertIn('TokenCoin 双向通道',result['result']['tools'][0]['title']);self.assertEqual(p.returncode,0)
  def test_no_arbitrary_http_bridge(self):
   self.assertTrue(self.a.action({'method':'GET','path':'https://example.com'})['isError'])
   self.assertTrue(self.a.action({'method':'GET','path':'/api/peers/../status'})['isError'])
