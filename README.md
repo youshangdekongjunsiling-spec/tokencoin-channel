@@ -1,5 +1,7 @@
 # TokenCoin 双向通道 Demo 0.3
 
+**额度功能开发进度：** 正式下载版仍为 v0.3.0，按请求次数限制。任务归属隔离、缓存用量记录与离线校准代码见 [开发分支](https://github.com/youshangdekongjunsiling-spec/tokencoin-channel/tree/work/weekly-usage-calibration)，方法与实测边界见 [说明](https://github.com/youshangdekongjunsiling-spec/tokencoin-channel/blob/work/weekly-usage-calibration/codex-channel/WEEKLY_BUDGET.md)。真实周比例拟合和百分比放行尚未验收。
+
 **双方安装同一个插件，复制邀请串给朋友，对方粘贴即可连接，无需手动组局域网或 VPN。** 可以向朋友提供自己的模型调用，也可以使用朋友提供的通道。
 
 ![快速连接面板](docs/interface.png)
