@@ -4,7 +4,7 @@ from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import channel,dashboard,official_reserve
-from test_budget_dashboard import RunningDashboard,FakeProcess
+from test_budget_dashboard import RunningDashboard,FakeProcess,profile
 
 class ReserveDashboardTests(unittest.TestCase):
  def setUp(self):
@@ -34,6 +34,22 @@ class ReserveDashboardTests(unittest.TestCase):
   for value in (True,'30',29,31):
    with self.subTest(value=value),self.assertRaises(dashboard.ApiError):dashboard.DashboardState._supplier_fields({**base,'official_reserve_floor':value})
   with self.assertRaises(dashboard.ApiError):dashboard.DashboardState._supplier_fields({**base,'mode':'mock','official_reserve_floor':30})
+ def test_estimated_budget_and_official_reserve_are_both_attached(self):
+  self.app.state.settings['supplier']['official_reserve_floor']=30
+  until=time.time()+600
+  with channel.db(self.home) as c:
+   p=profile();p['validated_until']=until
+   import weekly_budget
+   weekly_budget.install_profile(c,p)
+   official_reserve.configure(c,30,{'scope_hash':'a'*64,'plan_type':'test','weekly_reset':until,'checked_at':time.time(),'used_percent':56,'remaining_percent':44})
+  body={**self.payload(),'budget_mode':'estimated_weekly_with_official_reserve','weekly_percent':10}
+  code,x=self.app.request('/api/supplier/invites',body);self.assertEqual(code,200)
+  budget=x['metadata']['budget'];self.assertEqual(budget['mode'],'estimated_weekly_with_official_reserve')
+  self.assertEqual(budget['estimated_weekly']['budget_percent'],10)
+  self.assertEqual(budget['official_weekly_reserve']['remaining_percent'],44)
+  with channel.db(self.home) as c:
+   self.assertEqual(c.execute('SELECT COUNT(*) FROM weekly_budget_grants').fetchone()[0],1)
+   self.assertEqual(c.execute('SELECT COUNT(*) FROM official_reserve_grants').fetchone()[0],1)
  def test_explicit_reserve_flag_reaches_supplier_process(self):
   self.app.state.supplier_process=None
   real_popen=dashboard.subprocess.Popen; launched=[]

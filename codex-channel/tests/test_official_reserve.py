@@ -75,6 +75,24 @@ class ReserveTests(unittest.TestCase):
                 with self.assertRaisesRegex(official_reserve.ReserveError,'floor_frozen'):official_reserve.configure(c,29,r.read())
         finally:g.close();td.cleanup()
 
+    def test_expired_reserve_requires_explicit_bounded_reauthorization(self):
+        td,home,r,g,cid=self.make();g.close();now=time.time()
+        with channel.db(home) as c:c.execute('UPDATE official_reserve_config SET valid_until=? WHERE singleton=1',(now-1,))
+        with channel.db(home) as c:
+            with self.assertRaisesRegex(official_reserve.ReserveError,'official_reserve_expired'):
+                official_reserve.configure(c,30,r.read(),now=now)
+            renewed=official_reserve.configure(c,30,r.read(),now=now,authorized_until=now+300)
+        self.assertEqual(renewed['valid_until'],now+300);td.cleanup()
+
+    def test_active_reserve_extension_requires_all_grants_revoked(self):
+        td,home,r,g,cid=self.make();g.close();now=time.time()
+        with channel.db(home) as c:
+            with self.assertRaisesRegex(official_reserve.ReserveError,'official_reserve_active_grants'):
+                official_reserve.configure(c,30,r.read(),now=now,authorized_until=now+300)
+            c.execute('UPDATE channels SET revoked=1 WHERE id=?',(cid,))
+            changed=official_reserve.configure(c,30,r.read(),now=now,authorized_until=now+300)
+        self.assertEqual(changed['valid_until'],now+300);td.cleanup()
+
     def test_monitor_enforces_cutoff_and_real_loopback_abort(self):
         td,home,r,g,cid=self.make(interval=.01)
         listener=socket.socket();listener.bind(('127.0.0.1',0));listener.listen(1)

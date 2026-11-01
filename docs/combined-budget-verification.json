@@ -1,0 +1,54 @@
+{
+  "version": "0.4.2",
+  "verified_at": "2026-11-01T01:44:50.374421+00:00",
+  "regression": {
+    "tests": 112,
+    "result": "passed",
+    "command": "python -B -m unittest discover -s demo/codex-channel/tests -v",
+    "seconds": 53.251
+  },
+  "ui": {
+    "javascript_syntax": "passed",
+    "combined_known_and_unknown_budget_render_cases": 2
+  },
+  "real_cli": {
+    "new_combined_channel": "passed",
+    "completed_upstream_requests": 1,
+    "upstream_usage_reported": true,
+    "owner_test_separate_from_friend": true,
+    "owner_test_revoked": true,
+    "both_budget_grants": true,
+    "scope": "minimal CLI task; full file/bugfix/test workflow previously verified in v0.4.1"
+  },
+  "calibration": {
+    "training_tasks": 8,
+    "validation_tasks": 4,
+    "original_calls": 28,
+    "labels": "12/12 available/included_plan; data_as_of covers completion",
+    "nonnegative_coefficients": true,
+    "normalized_rank": 3,
+    "normalized_condition_number_approx": 2.485,
+    "validation_mae_percentage_points": 2.168404344971009e-19,
+    "validation_max_error_percentage_points": 4.336808689942018e-19,
+    "future_error_bound": false,
+    "public_profile_included": false,
+    "stratum": {
+      "model": "gpt-6.1-sol",
+      "requested_effort": "low",
+      "service_tier": "default"
+    }
+  },
+  "policy": {
+    "friend_weekly_percent": 10,
+    "additional_official_remaining_floor_percent": 30,
+    "fixed_deadline_max_hours": 24,
+    "restart_renews": false,
+    "automatic_renewal": false
+  },
+  "limits": [
+    "Experimental estimates, not official billing formula.",
+    "Observed validation error is not a confidence interval or future hard bound.",
+    "Official delay and in-flight generation can overshoot.",
+    "macOS hardware and remote friend trial not yet verified."
+  ]
+}

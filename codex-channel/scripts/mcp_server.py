@@ -5,7 +5,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parent))
 import dashboard
 ROOT=Path(__file__).resolve().parent.parent
 URI="ui://tokencoin/dashboard-v030"
-VERSION="0.4.1"
+VERSION="0.4.2"
 class Plugin:
  def __init__(self,home=None):
   self.home=home;self.server=None;self.thread=None

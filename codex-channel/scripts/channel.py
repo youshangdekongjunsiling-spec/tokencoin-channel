@@ -93,8 +93,10 @@ def invite(home, base_url, out, label='friend', requests=20, minutes=60, allow_p
     reserve_option=options.pop('official_reserve',False)
     if options:raise TypeError('Unknown invite option')
     if reserve_option:
-        if budget_mode not in (None,'official_weekly_reserve'):raise ValueError('Conflicting budget mode')
-        budget_mode='official_weekly_reserve'
+        if budget_mode not in (None,'official_weekly_reserve','estimated_weekly_with_official_reserve'):
+            raise ValueError('Conflicting budget mode')
+        budget_mode=('estimated_weekly_with_official_reserve'
+                     if weekly_percent is not None else 'official_weekly_reserve')
     if not 1 <= requests <= 1000 or not 1 <= minutes <= 1440: raise ValueError('Invalid request or expiry limit')
     cfg = config(home); base_url = valid_url(base_url, allow_private_http)
     if weekly_percent is not None and cfg['backend']!='subscription-adapter':
@@ -111,9 +113,8 @@ def invite(home, base_url, out, label='friend', requests=20, minutes=60, allow_p
     with db(home) as c:
         weekly_budget.initialize(c)
         official_reserve.initialize(c)
-        if budget_mode=='official_weekly_reserve':
+        if budget_mode in ('official_weekly_reserve','estimated_weekly_with_official_reserve'):
             if cfg['backend']!='subscription-adapter':raise official_reserve.ReserveError('official_reserve_requires_subscription')
-            if weekly_percent is not None:raise official_reserve.ReserveError('conflicting_budget_modes')
             reserve_cfg=c.execute('SELECT valid_until,weekly_reset FROM official_reserve_config WHERE singleton=1').fetchone()
             if not reserve_cfg:raise official_reserve.ReserveError('official_reserve_not_configured')
             expiry=min(expiry,reserve_cfg['valid_until'],reserve_cfg['weekly_reset']);value['expires']=expiry
@@ -121,8 +122,10 @@ def invite(home, base_url, out, label='friend', requests=20, minutes=60, allow_p
         c.execute('BEGIN IMMEDIATE')
         c.execute('INSERT INTO channels(id,label,token_hash,expires,remaining) VALUES(?,?,?,?,?)',
                   (channel_id,label,secret_hash(token),expiry,requests))
-        if weekly_percent is not None:budget=weekly_budget.create_grant(c,channel_id,weekly_percent)
-        if budget_mode=='official_weekly_reserve':budget=official_reserve.create_grant(c,channel_id)
+        estimated=weekly_budget.create_grant(c,channel_id,weekly_percent) if weekly_percent is not None else None
+        reserve_budget=(official_reserve.create_grant(c,channel_id)
+                        if budget_mode in ('official_weekly_reserve','estimated_weekly_with_official_reserve') else None)
+        budget=_combined_budget(estimated,reserve_budget)
         try: private_write(out, value)
         except BaseException: c.rollback(); raise
     return {'channel_id':channel_id, 'invitation_file':str(Path(out).resolve()),
@@ -132,6 +135,15 @@ def auth(c, token):
     row = c.execute('SELECT * FROM channels WHERE token_hash=?',(secret_hash(token),)).fetchone()
     if not row or row['revoked'] or row['expires'] <= time.time(): raise ChannelError(401,'channel_invalid_or_expired')
     return row
+
+def _combined_budget(estimated,reserve_budget):
+    if estimated is not None and reserve_budget is not None:
+        return {'mode':'estimated_weekly_with_official_reserve',
+                'estimated_weekly':estimated,'official_weekly_reserve':reserve_budget}
+    return reserve_budget or estimated
+
+def _channel_budget(c,channel_id):
+    return _combined_budget(weekly_budget.summary(c,channel_id),official_reserve.summary(c,channel_id))
 
 def reserve(home, token, idem, body=None):
     with db(home) as c:
@@ -163,7 +175,7 @@ def local_status(home):
         channels=[dict(r) for r in c.execute('SELECT id,label,expires,remaining,revoked FROM channels')]
         official_reserve.initialize(c)
         reserve_state=official_reserve.summary(c)
-        for item in channels:item['budget']=official_reserve.summary(c,item['id']) or weekly_budget.summary(c,item['id'])
+        for item in channels:item['budget']=_channel_budget(c,item['id'])
         requests=[dict(r) for r in c.execute('SELECT id,channel_id,status,started,ended,usage FROM requests ORDER BY started DESC LIMIT 30')]
     return dict(supplier=cfg['name'],model=cfg['model'],backend=cfg['backend'],channels=channels,requests=requests,calibration=calibration,official_reserve=reserve_state)
 
@@ -214,7 +226,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if self.path!='/v1/channel': raise ChannelError(404,'route_not_found')
             with db(self.server.home) as c:
                 row=auth(c,self.token())
-                budget=official_reserve.summary(c,row['id']) or weekly_budget.summary(c,row['id'])
+                budget=_channel_budget(c,row['id'])
             cfg=self.server.cfg
             self.json_reply(200,dict(channel_id=row['id'],supplier=cfg['name'],backend=cfg['backend'],
                                    model=cfg['model'],remaining_requests=row['remaining'],expires=row['expires'],budget=budget))

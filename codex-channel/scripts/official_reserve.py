@@ -15,18 +15,30 @@ def initialize(c):
     c.execute('''CREATE TABLE IF NOT EXISTS official_reserve_grants(
       channel_id TEXT PRIMARY KEY REFERENCES channels(id))''')
 
-def configure(c,floor,snapshot,now=None):
+def configure(c,floor,snapshot,now=None,authorized_until=None):
     initialize(c);now=time.time() if now is None else now
     if not isinstance(floor,(int,float)) or isinstance(floor,bool) or not math.isfinite(floor) or not 1<=floor<=99:raise ReserveError('invalid_reserve_floor')
-    valid=min(now+86400,snapshot['weekly_reset'])
+    if authorized_until is not None:
+        if (isinstance(authorized_until,bool) or not isinstance(authorized_until,(int,float))
+                or not math.isfinite(authorized_until) or authorized_until<=now
+                or authorized_until>now+86400 or authorized_until>snapshot['weekly_reset']):
+            raise ReserveError('invalid_authorized_until')
+        valid=float(authorized_until)
+    else:valid=min(now+86400,snapshot['weekly_reset'])
     if valid<=now:raise ReserveError('official_window_expired')
     existing=c.execute('SELECT * FROM official_reserve_config WHERE singleton=1').fetchone()
     if existing and (existing['scope_hash']!=snapshot['scope_hash'] or existing['weekly_reset']!=snapshot['weekly_reset']):
         raise ReserveError('official_scope_or_window_changed')
     if existing:
         if float(existing['floor_percent'])!=float(floor):raise ReserveError('official_reserve_floor_frozen')
-        if existing['valid_until']<=now:raise ReserveError('official_reserve_expired')
-        valid=existing['valid_until']
+        if existing['valid_until']<=now:
+            if authorized_until is None:raise ReserveError('official_reserve_expired')
+        elif authorized_until is not None and float(authorized_until)!=float(existing['valid_until']):
+            live=c.execute('''SELECT 1 FROM official_reserve_grants g JOIN channels ch ON ch.id=g.channel_id
+              WHERE ch.revoked=0 AND ch.expires>? LIMIT 1''',(now,)).fetchone()
+            if live:raise ReserveError('official_reserve_active_grants')
+            valid=float(authorized_until)
+        else:valid=existing['valid_until']
     reason='reserve_floor_reached' if snapshot['remaining_percent']<=floor else None
     c.execute('''INSERT OR REPLACE INTO official_reserve_config VALUES(1,?,?,?,?,?,?,?,?,?)''',
       (float(floor),snapshot['scope_hash'],snapshot['plan_type'],snapshot['weekly_reset'],valid,
@@ -106,11 +118,11 @@ class OfficialUsageReader:
 
 class ReserveGuard:
     STICKY={'official_scope_or_window_changed','official_reserve_expired','supplier_stopped'}
-    def __init__(self,home,reader,floor=30,max_age=5,monitor_interval=2):
+    def __init__(self,home,reader,floor=30,max_age=5,monitor_interval=2,authorized_until=None):
         self.home=Path(home);self.reader=reader;self.max_age=max_age;self.interval=monitor_interval
         self.lock=threading.RLock();self.active={};self.closed=False;self.stop_event=threading.Event()
         snap=reader.read()
-        with self._db() as c:configure(c,floor,snap)
+        with self._db() as c:configure(c,floor,snap,authorized_until=authorized_until)
         self.snapshot=snap;self.thread=threading.Thread(target=self._monitor,daemon=True);self.thread.start()
     @contextlib.contextmanager
     def _db(self):

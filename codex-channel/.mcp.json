@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "tokencoin": {
-      "command": "python",
+      "command": "C:\\Users\\yuanh\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
       "args": [
         "-X",
         "utf8",

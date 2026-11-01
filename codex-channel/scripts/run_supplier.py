@@ -93,6 +93,8 @@ def main():
     parser.add_argument("--allow-private-http", action="store_true")
     parser.add_argument("--official-reserve-floor",type=float,
                         help="Temporary fail-closed official weekly remaining-percent floor")
+    parser.add_argument("--official-reserve-valid-until",type=float,
+                        help="Explicit user-authorized reserve cutoff epoch; never renewed on restart")
     parser.add_argument("--stop-file", type=Path,
                         help="Private dashboard-owned stop marker; normal CLI use should omit this")
     args = parser.parse_args()
@@ -105,8 +107,11 @@ def main():
     with AdapterProcess(adapter.default_root().resolve()) as upstream:
         if args.model not in upstream.models: raise ValueError("Requested model is absent from adapter catalog")
         prepared=prepare_home(home,args.name,args.model);guard=None
+        if args.official_reserve_valid_until is not None and args.official_reserve_floor is None:
+            raise ValueError("Reserve cutoff requires the reserve floor")
         if args.official_reserve_floor is not None:
-            guard=official_reserve.ReserveGuard(prepared,upstream.official_reader,args.official_reserve_floor)
+            guard=official_reserve.ReserveGuard(prepared,upstream.official_reader,args.official_reserve_floor,
+                                                authorized_until=args.official_reserve_valid_until)
         server = channel.Gateway((args.host,args.port),prepared,upstream_key=upstream.config["access"]["api-keys"][0],reserve_guard=guard)
         print(json.dumps({"ready": True, "supplier": args.name, "model": args.model,
                           "gateway": "http://" + args.host + ":" + str(server.server_port),
